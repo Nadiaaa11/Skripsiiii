@@ -1,0 +1,131 @@
+<html>
+
+<head>
+
+	<!-- seo related -->
+	<title>Chatbot</title>
+
+	<!-- meta related -->
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+	<!-- vendor css & style files -->
+	<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css?family=Josefin+Sans:300|Open+Sans:300|Oxygen|Material+Icons"
+		rel="stylesheet">
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900&display=swap"
+		rel="stylesheet">
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+
+	<!-- custom css -->
+	<link rel="stylesheet" href="/static/main.css">
+
+</head>
+
+<body>
+
+	<div class="container">
+
+		<div class="row padded_row">
+
+			<!-- right side content -->
+			<div class="col-md-7">
+
+				<div class="chat_window">
+
+					<div class="top_menu">
+						<div class="title">ChatBot</div>
+					</div>
+
+					<!-- dynamically rendered -->
+					<ul class="messages"></ul>
+
+					<!-- input -->
+					<div class="bottom_wrapper">
+						<input type="image" id="add_img" src="static/img/add1.png" alt="Submit" width="48px" height="48px" style="margin-right: 15px;" />
+						<input type="file" id="file_input" style="display: none;" accept="image/*">
+						<input id="msg_input" placeholder="Say Hi to begin chat..." />
+						<div id="send_button" class="app_button_1">Send</div>
+					</div>
+
+				</div>
+
+			</div>
+
+			<!-- left side content -->
+			<div class="col-md-5">
+				<div class="chat_window">
+
+					<div class="top_menu">
+						<div class="title">History</div>
+					</div>
+
+					<!-- Chat History -->
+					<div class="panel-group" id="accordion">
+						<!-- JavaScript will dynamically render chat history here -->
+					</div>
+
+				</div>
+			</div>
+
+		</div>
+
+	</div>
+
+	<!-- vendor script files -->
+	<script src="https://code.jquery.com/jquery-2.2.4.min.js"></script>
+	<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/js/bootstrap.min.js">
+	</script>
+
+	<!-- custom scripts -->
+	<script src="/static/main.js"></script>
+</body>
+
+</html>
+
+/* .chat-history {
+	text-align: left;
+	width: 100%;
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	position: relative;
+	overflow-y: auto;
+	margin-bottom: 15px;
+	height: 400px;
+	z-index: 10;
+}
+
+.chat-message {
+	width: fit-content;
+	word-wrap: break-word;
+
+}
+
+.chat-message.user-input {
+	align-self: flex-end;
+	background-color: #A5B68D;
+	text-align: left;
+	border-radius: 5px;
+	padding: 5px;
+	margin-bottom: 8px;
+}
+
+.chat-message.ai-response {
+	background-color: #f1f1f1;
+	text-align: left;
+	border-radius: 5px;
+	padding: 5px;
+	margin-bottom: 8px;
+}
+
+#inputColumn {
+	position: fixed;
+	bottom: 3%;
+	width: 95%;
+	padding: 10px;
+	background: white;
+} */

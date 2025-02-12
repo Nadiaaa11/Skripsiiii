@@ -1,0 +1,213 @@
+{% include 'layout.html'%}
+<div class="container">
+    <div>
+        <div class="card text-center mt-3">
+            <div class="card-body chat-history" id="chatHistory" style="height: 400px; overflow: hidden;overflow-y: auto;">
+                {% for response in chat_response %}
+                <div class="{{ 'chat-message user-input' if loop.index0 is even else 'chat-message ai-response' }}">
+                    {{ response | safe}}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <div class="container" id="inputColumn">
+      <!-- Image Preview -->
+      <div id="imagePreviewContainer" style="margin-top: 10px; text-align: center;"></div>
+
+      <div class="input-group mb-3">
+          <button class="btn btn-outline-primary" type="button" id="plusButton">
+            <img src="./static/img/attach.png" alt="Attach" style="width: 16px; height: 16px;">
+          </button>
+          <textarea class="form-control" placeholder="What can i do for you today?" id="userInput" oninput="autoResize(this)"></textarea>
+          <button class="btn btn-outline-primary" type="button" id="sendButton">Send</button>
+      </div>
+        
+    </div>
+
+    <input type="file" id="imageUpload" accept="image/*" style="display:none;">
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+    var ws = new WebSocket("ws://localhost:8000/ws");
+    var sendButton = document.getElementById("sendButton");
+    var plusButton = document.getElementById("plusButton");
+    var userInput = document.getElementById("userInput");
+    var chatHistory = document.getElementById("chatHistory");
+    var imagePreviewContainer = document.getElementById("imagePreviewContainer");
+    var lastUserMessageDiv = null;
+    var isNewUserInput = true;
+
+    let selectedImageFile = null;
+    let typingMessageDiv = null;
+    
+    // function saveMessage(content, isUser, isImage=false) {
+    //   chatHistoryArray.push({
+    //     content: content,
+    //     isUser: isUser,
+    //     isImage: isImage,
+    //     timestamp: new Date().getTime()
+    //   });
+    //   localStorage.setItem('chatHistory', JSON.stringify(chatHistoryArray));
+    // }
+
+    // function loadChatHistory() {
+    //   chatHistoryArray.forEach(msg => {
+    //     var messageDiv = document.createElement("div");
+    //     messageDiv.className = msg.isUser ? "chat-message user-input" : "chat-message ai-response";
+    //     if (msg.isImage) {
+    //       messageDiv.innerHTML = `<img src="${msg.content}" alt="Uploaded Image" style="max-width: 50px">`;
+    //     }else{
+    //       if (msg.isUser) {
+    //         messageDiv.textContent = msg.content;
+    //       }else{
+    //         messageDiv.innerHTML = marked.parse(msg.content);
+    //       }
+    //     }
+    //     chatHistory.appendChild(messageDiv);
+    //   });
+    //   chatHistory.scrollTop = chatHistory.scrollHeight;
+    // }
+
+    // window.addEventListener('load', loadChatHistory);
+
+    // Update connection status on open, close, or error
+    ws.onopen = function() {
+      console.log("Websocket connection established.");
+    }
+
+    ws.onmessage = function(event) {
+      if (typingMessageDiv) {
+        typingMessageDiv.remove();
+        typingMessageDiv = null;
+      }
+
+      var message = event.data.trim();
+
+      if (lastUserMessageDiv && !isNewUserInput){
+          var shouldAddSpace = true;
+          var noPrependSpaceChars = [',', '.', '!', '?', ';', ':', "'"];
+
+          if (noPrependSpaceChars.includes(message.charAt(0))) {
+              shouldAddSpace = false;
+          }
+
+          lastUserMessageDiv.innerHTML += (shouldAddSpace ? " " : "") + message;
+
+          // if (chatHistoryArray.length > 0){
+          //   chatHistoryArray[chatHistoryArray.length - 1].content += (shouldAddSpace ? " " : "") + message;
+          //   localStorage.setItem('chatHistory', JSON.stringify(chatHistoryArray));
+          // }
+      } else {
+        var messageDiv = document.createElement("div");
+        messageDiv.className = "chat-message ai-response";
+        chatHistory.appendChild(messageDiv);
+        lastUserMessageDiv = messageDiv;
+        isNewUserInput = false;
+      }
+
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+    };
+
+    ws.onerror = function(error) {
+      console.log("Websocket error:", error);
+    }
+
+    function autoResize(textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = textarea.scrollHeight + 'px';
+    }
+
+    plusButton.onclick = function() {
+        document.getElementById("imageUpload").click();
+    };
+
+    const imageUpload = document.getElementById('imageUpload');
+    const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+
+    document.getElementById("imageUpload").onchange = function(event)  {
+      const file = event.target.files[0]
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          imagePreviewContainer.innerHTML = `<img src="${e.target.result}" alt="Image Preview" style="max-width: 100px">`;
+          
+        };
+
+        reader.readAsDataURL(file);
+        selectedImageFile = file;
+        
+      }
+    }; 
+
+    sendButton.onclick = function() {
+      const userMessage = userInput.value.trim();
+      const formData = new FormData();
+
+      if (!userMessage && !selectedImageFile) {
+        alert("Please enter a message or select an image.");
+        return;
+      }
+      
+      if (userMessage) {
+        formData.append('user_input', userMessage);
+      }
+
+      if (selectedImageFile) {
+        formData.append('file', selectedImageFile);
+      }
+
+      fetch('/upload/', {
+        method: 'POST',
+        body: formData
+      })
+      .then(response => response.json())
+      .then(data => {
+        if(data.success) {
+          if(data.file_url){
+            var imageMessageDiv = document.createElement("div");
+            imageMessageDiv.className = "chat-message user-input";
+            imageMessageDiv.innerHTML = `<img src="${data.file_url}" alt="Uploaded Image" style="max-width: 50px">`;
+            chatHistory.appendChild(imageMessageDiv);
+            ws.send(data.file_url);
+
+          }
+
+          if (userMessage) {
+            var userInputDiv = document.createElement("div");
+            userInputDiv.className = "chat-message user-input";
+            userInputDiv.textContent = userMessage;
+            chatHistory.appendChild(userInputDiv);
+            lastUserMessageDiv = userInputDiv;
+            ws.send(userMessage);
+
+          }
+          // Show the "typing..." message while waiting for a response
+          typingMessageDiv = document.createElement("div");
+          typingMessageDiv.className = "chat-message ai-response typing";
+          typingMessageDiv.innerHTML = "Typing...";
+          chatHistory.appendChild(typingMessageDiv);
+
+          // Auto scroll to the bottom after sending the message
+          chatHistory.scrollTop = chatHistory.scrollHeight;
+        } else {
+          console.error("Image upload failed:", data.error);
+          imagePreviewContainer.innerHTML = `<p style="color: red;">Upload failed. Please try again.</p>`;
+        }
+      })
+      .catch(error => {
+        console.error("Error during image upload:", error);
+        imagePreviewContainer.innerHTML = `<p style="color: red;">Error uploading the image. Please try again.</p>`;
+      });
+
+      userInput.value = '';
+      autoResize(userInput);
+      selectedImageFile = null;
+      imagePreviewContainer.innerHTML = "";
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+      isNewUserInput = true;
+      
+    };
+</script>
