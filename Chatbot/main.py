@@ -2,18 +2,21 @@ from collections import defaultdict
 import http
 import shutil
 from openai import OpenAI
-from fastapi import FastAPI, Form, Request, File, UploadFile, WebSocket, Depends, HTTPException
+from fastapi import FastAPI, Form, Request, File, UploadFile, WebSocket, Depends, HTTPException, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from slugify import slugify
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, String, Float, func, or_
+from sqlalchemy import Column, DateTime, Integer, String, Float, func, or_
 from databases import Database
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.future import select
 from fastapi.middleware.cors import CORSMiddleware
 from markdown import markdown
+from datetime import datetime
+from typing import List
+from pydantic import BaseModel
 import os
 import re
 import uuid
@@ -75,6 +78,22 @@ class ProductVariant(Base):
     color = Column(String(50), nullable=False)
     stock = Column(Integer, nullable=False)
     product_price = Column(Float, nullable=False)
+
+class ChatHistoryDB(Base):
+    __tablename__ = "chat_history"
+    message_id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(100), nullable=False)
+    message_type = Column(String(20), nullable=False)
+    content = Column(String(2000), nullable=False)
+    timestamp = Column(DateTime, server_default=func.now())
+
+class ChatMessage(BaseModel):
+    session_id: str
+    message_type: str
+    content: str
+
+class ChatHistoryResponse(BaseModel):
+    messages: List[ChatMessage]
 
 async def create_tables():
     async with engine.begin() as conn:
@@ -202,8 +221,6 @@ def upload_to_cloudinary(file_location):
         logging.error(f"Cloudinary upload error: {e}")
         return None
 
-logging.basicConfig(level=logging.DEBUG)
-
 @app.post("/upload/")
 async def upload(user_input: str = Form(None), file: UploadFile = None):
     if user_input:
@@ -213,7 +230,6 @@ async def upload(user_input: str = Form(None), file: UploadFile = None):
     
     try:
         if file:
-            logging.info(f"File received: {file.filename}")
             # Save file with unique name in the upload directory
             file_extension = file.filename.split(".")[-1].lower()
             if file_extension not in ALLOWED_EXTENSIONS:
@@ -244,7 +260,6 @@ async def upload(user_input: str = Form(None), file: UploadFile = None):
         return JSONResponse(content={"success": False, "error": "No input or file received"})
 
     except Exception as e:
-        logging.error(f"Upload error: {str(e)}")
         raise HTTPException(status_code=500, detail="An error occurred during file upload.")
 
 chat_responses = []
@@ -253,127 +268,198 @@ async def is_small_talk(input_text):
     greetings = ["hello", "hi", "hey", "hi there", "hello there", "good morning", "good afternoon", "good evening", "selamat pagi", "pagi", "selamat siang", "siang", "malam", "selamat malam"]
     return input_text.lower() in greetings or re.match(r"^\s*(hi|hello|hey)\s*$", input_text, re.IGNORECASE)
 
-sessions = defaultdict(dict)
+@app.post("/chat/save")
+async def save_message(message: ChatMessage, db: AsyncSession = Depends(get_db)):
+    try:
+        new_message = ChatHistoryDB(
+            session_id=message.session_id,
+            message_type=message.message_type,
+            content=message.content
+        )
+        db.add(new_message)
+        await db.commit()
+        return {"sucess": True}
+    except Exception as e:
+        await db.rollback()
+        logging.error(f"Error saving message: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.get("/chat/history/{session_id}")
+async def get_chat_history(session_id: str, db: AsyncSession = Depends(get_db)):
+    try:
+        query = select(ChatHistoryDB).where(
+            ChatHistoryDB.session_id == session_id
+        ).order_by(ChatHistoryDB.timestamp)
+
+        result = await db.execute(query)
+        messages =  result.scalars().all()
+
+        return ChatHistoryResponse(
+            messages=[
+                ChatMessage (
+                    session_id=msg.session_id,
+                    message_type=msg.message_type,
+                    content=msg.content
+                ) for msg in messages
+            ]
+        )
+            
+    except Exception as e:
+        logging.error(f"Error getting chat history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.websocket("/ws")
 async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
-    print("Attempting WebSocket connection...")
-    await websocket.accept()
-    print("WebSocket connection accepted.")
+    try:
+        await websocket.accept()
 
-    message_objects = []
+        message_objects = [{
+            "role": "system",
+            "content": (
+                "You are a fashion consultant. Your task is to provide detailed fashion recommendations "
+                "for users based on their appearance and style preferences. Respond in a friendly, natural tone "
+                "and avoid using structured JSON or code format. Instead, communicate recommendations in conversational sentences.\n\n"
+                "When giving recommendations, mention specific clothing items and how they would suit the user's attributes, "
+                "such as height, weight, and skin tone. Use descriptive phrases and consider mentioning outfit ideas for casual occasions, "
+                "unless the user specifies a different occasion.\n\n"
+                "make each clothing item as a bold text and for the explanation make it as a paragraph and in different line from the title, for new or different item make it in different line."
+                "Example response:\n"
+                "For casual wear, here are some styles that would look great on you:  \n"
+                "- Cropped Tees or Tank Tops  \n– Perfect for a laid-back look, and they can help accentuate your waist and balance out your height.  \n"
+                "- Oversized T-shirts  \n– A relaxed fit in earthy or jewel tones would be flattering. You could tuck them into high-waisted jeans or shorts to add some shape.  \n"
+                "- Off-Shoulder Tops  \n– These are cute and can show off some skin while keeping things casual. They also come in various styles, like long-sleeved or with ruffles, which add a nice detail.  \n"
+                "- Button-Up Shirts (Linen or Cotton)  \n– A lightweight button-up, especially in tan, beige, or pastel shades, could be a staple. You can wear it loose or tied at the waist.  \n"
+                "- Graphic Tees  \n– These are always in style and add personality to any casual outfit. You could go for retro or minimalist designs in colors that complement your skin tone.  \n\n"
+                "Ask the user if these styles align with their preferences or if they have any specific style they would like to focus on."
+                "Do not mention any specific brand of clothing"
+                "Always ask for user opinion after each suggestion"
+            )
+        }]
 
-    message_objects.append = [{
-        "role": "system",
-        "content": (
-            "You are a fashion consultant. Your task is to provide detailed fashion recommendations "
-            "for users based on their appearance and style preferences. Respond in a friendly, natural tone "
-            "and avoid using structured JSON or code format. Instead, communicate recommendations in conversational sentences.\n\n"
-            "When giving recommendations, mention specific clothing items and how they would suit the user's attributes, "
-            "such as height, weight, and skin tone. Use descriptive phrases and consider mentioning outfit ideas for casual occasions, "
-            "unless the user specifies a different occasion.\n\n"
-            "make each clothing item as a bold text and for the explanation make it as a paragraph and in different line from the title, for new or different item make it in different line."
-            "Example response:\n"
-            "For casual wear, here are some styles that would look great on you:  \n"
-            "- **Cropped Tees or Tank Tops**  \n– Perfect for a laid-back look, and they can help accentuate your waist and balance out your height.  \n"
-            "- **Oversized T-shirts**  \n– A relaxed fit in earthy or jewel tones would be flattering. You could tuck them into high-waisted jeans or shorts to add some shape.  \n"
-            "- **Off-Shoulder Tops**  \n– These are cute and can show off some skin while keeping things casual. They also come in various styles, like long-sleeved or with ruffles, which add a nice detail.  \n"
-            "- **Button-Up Shirts (Linen or Cotton)**  \n– A lightweight button-up, especially in tan, beige, or pastel shades, could be a staple. You can wear it loose or tied at the waist.  \n"
-            "- **Graphic Tees**  \n– These are always in style and add personality to any casual outfit. You could go for retro or minimalist designs in colors that complement your skin tone.  \n\n"
-            "Ask the user if these styles align with their preferences or if they have any specific style they would like to focus on."
-            "Do not mention any specific brand of clothing"
-            "Always ask for user opinion after each suggestion"
-        )
-    }]
-
-
-    while True:            
-        user_input = await websocket.receive_text()
-
-        if await is_small_talk(user_input):
-            ai_response = "Hello! How can i assist you with fashion recommendation today?"
-            await websocket.send_text(ai_response)
-            continue
-
-        message_objects.append({
-            "role": "user",
-            "content": user_input,
-        })
-
-        ai_response = None
-
-        try:
-            if user_input.startswith("http://") or user_input.startswith("https://"):
-                clothing_features = await analyze_uploaded_image(user_input)
-
-                response = openai.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": clothing_features}],
-                    temperature=0.5
-                )
-
-                ai_response = response.choices[0].message.content.strip()
-
-                message_objects.append({
-                    "role": "assistant",
-                    "content": ai_response
-                })
-
-                ai_response_html = render_markdown(ai_response)
-                await websocket.send_text(ai_response_html)
+        while True:            
+            try:
+                data = await websocket.receive_text()
+                # Parse session_id and user_input from the received data
+                session_id, user_input = data.split("|", 1)
                 
-                keywords = extract_keywords_from_ai_response(clothing_features)
-        
-            else:
-                # Get OpenAI response using message_objects
-                response = openai.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=message_objects,
-                    temperature=0.5
-                )
+                if not user_input:
+                    continue
 
-                ai_response = response.choices[0].message.content.strip()
+                # Save user message to database - Fixed to use ChatHistoryDB
+                new_user_message = ChatHistoryDB(
+                    session_id=session_id,
+                    message_type="user",
+                    content=user_input
+                )
+                db.add(new_user_message)
+                await db.commit()
+
+                if await is_small_talk(user_input):
+                    ai_response = "Hello! How can I assist you with fashion recommendation today?"
+                    # Save AI response to database - Fixed to use ChatHistoryDB
+                    new_ai_message = ChatHistoryDB(
+                        session_id=session_id,
+                        message_type="assistant",
+                        content=ai_response
+                    )
+                    db.add(new_ai_message)
+                    await db.commit()
+                    await websocket.send_text(ai_response)
+                    continue
+
+                message_objects.append({
+                    "role": "user",
+                    "content": user_input,
+                })
+
+                if user_input.startswith(("http://", "https://")):
+                    clothing_features = await analyze_uploaded_image(user_input)
+                    # When saving error messages, use ChatHistoryDB
+                    if clothing_features.startswith("Error"):
+                        error_message = f"Sorry, I couldn't analyze that image: {clothing_features}"
+                        new_error_message = ChatHistoryDB(
+                            session_id=session_id,
+                            message_type="assistant",
+                            content=error_message
+                        )
+                        db.add(new_error_message)
+                        await db.commit()
+                        await websocket.send_text(error_message)
+                        continue
+
+                    response = openai.chat.completions.create(
+                        model="gpt-3-5-turbo",
+                        messages=[{"role": "user", "content": clothing_features}],
+                        temperature=0.5
+                    )
+                else:
+                    response = openai.chat.completions.create(
+                        model="gpt-3-5-turbo",
+                        messages=message_objects,
+                        temperature=0.5
+                    )
+
+                ai_response = response.choices[0].message.constent.strip()
 
                 message_objects.append({
                     "role": "assistant",
                     "content": ai_response
                 })
+                
+                # Extract keywords and fetch products
+                keywords = extract_keywords_from_ai_response(ai_response if not user_input.startswith(("http://", "https://")) else clothing_features)
+                recommended_products = await fetch_products_from_db(db, keywords)
 
-                ai_response_html = render_markdown(ai_response)
-                await websocket.send_text(ai_response_html)
-                # Fetch products from the database based on the user input
-                keywords = extract_keywords_from_ai_response(ai_response)
+                complete_response = ai_response
 
-            # Fetch products based on the user input
-            recommended_products = await fetch_products_from_db(db, keywords)
+                if not recommended_products.empty:
+                    complete_response += "\n\nI found these prodcuts I would recommend: \n"
+                    for _, row in recommended_products.iterrows():
+                        complete_response += (
+                            f"\n![Product Image]({row['photo']})\n"
+                            f"\n- **{row['product']}** for IDR{row['price']}\n"
+                            f"\n**{row['description']}**\n"
+                            f"\n- Available in this sizes: {', '.join(row['sizes'].split(','))}\n"
+                            f"\n - <a href='{row['link']}' target='_top'>Buy Now</a>\n"
+                        )
+                else:
+                    complete_response += "\n\nSorry, I couldn't find any products that match your description."
 
-            # Prepare the assistant's product recommendation response
-            if not recommended_products.empty:
-                recommendation_message = f"\n**I found these products I would recommend: **\n"
-                for _, row in recommended_products.iterrows():
-                    recommendation_message += (
-                        f"\n![Product Image]({row['photo']})\n"
-                        f"\n- **{row['product']}** for IDR{row['price']}\n"
-                        f"*{row['description']}*\n"
-                        f" - Available in these sizes: **{row['size']}**\n"
-                        f" - <a href='{row['link']}' target='_top'>View Product</a>\n"
+                # When saving AI responses, use ChatHistoryDB
+                new_ai_message = ChatHistoryDB(
+                    session_id=session_id,
+                    message_type="assistant",
+                    content=complete_response
+                )
+                db.add(new_ai_message)
+                await db.commit()
+
+                # Send the rendered markdown response
+                complete_response_html = render_markdown(complete_response)
+                await websocket.send_text(complete_response_html)
+
+            except Exception as e:
+                error_message = "I apologize, but I encountered an error processing your message."
+                if 'session_id' in locals():
+                    new_error_message = ChatHistoryDB(
+                        session_id=session_id,
+                        message_type="assistant",
+                        content=error_message
                     )
-            else:
-                recommendation_message = "Sorry, I couldn't find any products that match your description."
-            
-            recommendation_message_html = render_markdown(recommendation_message)
-            await websocket.send_text(recommendation_message_html)
-
-            print("Raw AI Response:", ai_response)
-            print("Length of AI Response:", len(ai_response))
-            print("AI Response HTML:", ai_response_html)
-            print("Recommendation message HTML:", recommendation_message_html)
-            print("Keywords:", keywords)
-
-        except Exception as e:
-            await websocket.send_text(f'Error: {str(e)}')
-            break
-
+                    db.add(new_error_message)
+                    await db.commit()
+                await websocket.send_text(error_message)
+                print(f"Error in message processing: {str(e)}")          
+    except WebSocketDisconnect:
+        print("WebSocket disconnected")
+    except Exception as e:
+        print(f"WebSocket error: {str(e)}")
+        try:
+            await websocket.close()
+        except:
+            pass
+        
 async def analyze_uploaded_image(image_url: str):
     try:
 

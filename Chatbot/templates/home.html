@@ -42,34 +42,6 @@
 
     let selectedImageFile = null;
     let typingMessageDiv = null;
-    
-    // function saveMessage(content, isUser, isImage=false) {
-    //   chatHistoryArray.push({
-    //     content: content,
-    //     isUser: isUser,
-    //     isImage: isImage,
-    //     timestamp: new Date().getTime()
-    //   });
-    //   localStorage.setItem('chatHistory', JSON.stringify(chatHistoryArray));
-    // }
-
-    // function loadChatHistory() {
-    //   chatHistoryArray.forEach(msg => {
-    //     var messageDiv = document.createElement("div");
-    //     messageDiv.className = msg.isUser ? "chat-message user-input" : "chat-message ai-response";
-    //     if (msg.isImage) {
-    //       messageDiv.innerHTML = `<img src="${msg.content}" alt="Uploaded Image" style="max-width: 50px">`;
-    //     }else{
-    //       if (msg.isUser) {
-    //         messageDiv.textContent = msg.content;
-    //       }else{
-    //         messageDiv.innerHTML = marked.parse(msg.content);
-    //       }
-    //     }
-    //     chatHistory.appendChild(messageDiv);
-    //   });
-    //   chatHistory.scrollTop = chatHistory.scrollHeight;
-    // }
 
     // window.addEventListener('load', loadChatHistory);
 
@@ -78,7 +50,53 @@
       console.log("Websocket connection established.");
     }
 
-    ws.onmessage = function(event) {
+    async function saveMessageToServer(message, type) {
+      try {
+        const response = await fetch('/chat/save', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            session_id: sessionId, 
+            message_type: type,
+            content: message
+          })
+        });
+        return await response.json();
+      } catch (error) {
+        console.error('Error saving message to server:', error);
+      }
+    }
+
+    async function loadChatHistoryFromServer() {
+      try {
+        const response = await fetch(`/chat/history/${sessionId}`);
+        const data = await response.json();
+
+        chatHistory.innerHTML = '';
+
+        data.message.forEach(message => {
+          const messageDiv = document.createElement('div');
+          messageDiv.className = `chat-message ${message.message_type === 'user' ? 'user-input' : 'ai-response'}`;
+          messageDiv.innerHTML = message.content;
+          chatHistory.appendChild(messageDiv);
+        });
+
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+      } catch (error) {
+        console.error('Error loading chat history:', error);
+      }
+    }
+
+    const sessionId = localStorage.getItem('chatSessionId') || Date.now().toString(36) + Math.random().toString(36).substr(2);
+    localStorage.setItem('chatSessionId', sessionId);
+
+    window.addEventListener('load', loadChatHistoryFromServer);
+
+    ws.send(`${sessionId}|${userMessage}`);
+
+    ws.onmessage = async function(event) {
       if (typingMessageDiv) {
         typingMessageDiv.remove();
         typingMessageDiv = null;
@@ -95,17 +113,14 @@
           }
 
           lastUserMessageDiv.innerHTML += (shouldAddSpace ? " " : "") + message;
-
-          // if (chatHistoryArray.length > 0){
-          //   chatHistoryArray[chatHistoryArray.length - 1].content += (shouldAddSpace ? " " : "") + message;
-          //   localStorage.setItem('chatHistory', JSON.stringify(chatHistoryArray));
-          // }
+          await saveMessageToServer(lastUserMessageDiv.innerHTML, 'user');
       } else {
         var messageDiv = document.createElement("div");
         messageDiv.className = "chat-message ai-response";
+        messageDiv.innerHTML = message;
         chatHistory.appendChild(messageDiv);
-        lastUserMessageDiv = messageDiv;
-        isNewUserInput = false;
+        await saveMessageToServer(message, 'assistant');
+        isNewUserInput = true;
       }
 
       chatHistory.scrollTop = chatHistory.scrollHeight;
@@ -125,7 +140,7 @@
     };
 
     const imageUpload = document.getElementById('imageUpload');
-    const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+    // const imagePreviewContainer = document.getElementById('imagePreviewContainer');
 
     document.getElementById("imageUpload").onchange = function(event)  {
       const file = event.target.files[0]
@@ -138,11 +153,17 @@
 
         reader.readAsDataURL(file);
         selectedImageFile = file;
-        
       }
     }; 
 
-    sendButton.onclick = function() {
+    userInput.addEventListener('keypress', function(event) {
+      if (event.key === 'Enter' && !event.shiftkey) {
+        event.preventDefault();
+        sendButton.click();
+      }
+    });
+
+    sendButton.onclick = async function() {
       const userMessage = userInput.value.trim();
       const formData = new FormData();
 
@@ -150,64 +171,60 @@
         alert("Please enter a message or select an image.");
         return;
       }
-      
-      if (userMessage) {
-        formData.append('user_input', userMessage);
-      }
 
-      if (selectedImageFile) {
-        formData.append('file', selectedImageFile);
-      }
+      try {
+        if (userMessage) {
+          formData.append('user_input', userMessage);
+        }
 
-      fetch('/upload/', {
-        method: 'POST',
-        body: formData
-      })
-      .then(response => response.json())
-      .then(data => {
-        if(data.success) {
-          if(data.file_url){
-            var imageMessageDiv = document.createElement("div");
+        if (selectedImageFile) {
+          formData.append('file', selectedImageFile);
+        }
+
+        const response = await fetch ('/upload/', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          if (data.file_url) {
+            const imageMessageDiv = document.createElement("div");
             imageMessageDiv.className = "chat-message user-input";
             imageMessageDiv.innerHTML = `<img src="${data.file_url}" alt="Uploaded Image" style="max-width: 50px">`;
             chatHistory.appendChild(imageMessageDiv);
             ws.send(data.file_url);
-
           }
-
           if (userMessage) {
-            var userInputDiv = document.createElement("div");
+            const userInputDiv = document.createElement("div");
             userInputDiv.className = "chat-message user-input";
             userInputDiv.textContent = userMessage;
             chatHistory.appendChild(userInputDiv);
             lastUserMessageDiv = userInputDiv;
             ws.send(userMessage);
-
           }
-          // Show the "typing..." message while waiting for a response
+          if (typingMessageDiv) {
+            typingMessageDiv.remove();
+          }
           typingMessageDiv = document.createElement("div");
-          typingMessageDiv.className = "chat-message ai-response typing";
+          typingMessageDiv.className = "chat-message ai-response";
           typingMessageDiv.innerHTML = "Typing...";
           chatHistory.appendChild(typingMessageDiv);
 
-          // Auto scroll to the bottom after sending the message
+          // Clear input and reset state
+          userInput.value = '';
+          autoResize(userInput);
+          selectedImageFile = null;
+          imagePreviewContainer.innerHTML = "";
           chatHistory.scrollTop = chatHistory.scrollHeight;
+          isNewUserInput = true;
         } else {
-          console.error("Image upload failed:", data.error);
-          imagePreviewContainer.innerHTML = `<p style="color: red;">Upload failed. Please try again.</p>`;
+          throw new Error(data.error || "Upload failed");
         }
-      })
-      .catch(error => {
-        console.error("Error during image upload:", error);
-        imagePreviewContainer.innerHTML = `<p style="color: red;">Error uploading the image. Please try again.</p>`;
-      });
-
-      userInput.value = '';
-      autoResize(userInput);
-      selectedImageFile = null;
-      imagePreviewContainer.innerHTML = "";
-      chatHistory.scrollTop = chatHistory.scrollHeight;
-      isNewUserInput = true;
-      
+      } catch (error) {
+        console.error("Error sending message: ", error);
+        alert("Failed to send message. Please try again.")
+      }
     };
 </script>
