@@ -48,6 +48,12 @@
     // Update connection status on open, close, or error
     ws.onopen = function() {
       console.log("Websocket connection established.");
+      sendButton.disabled = false;
+    }
+
+    ws.onclose = function() {
+      console.log("Websocket connection closed.");
+      sendButton.disabled = true;
     }
 
     async function saveMessageToServer(message, type) {
@@ -76,7 +82,7 @@
 
         chatHistory.innerHTML = '';
 
-        data.message.forEach(message => {
+        data.messages.forEach(message => {
           const messageDiv = document.createElement('div');
           messageDiv.className = `chat-message ${message.message_type === 'user' ? 'user-input' : 'ai-response'}`;
           messageDiv.innerHTML = message.content;
@@ -92,9 +98,9 @@
     const sessionId = localStorage.getItem('chatSessionId') || Date.now().toString(36) + Math.random().toString(36).substr(2);
     localStorage.setItem('chatSessionId', sessionId);
 
-    window.addEventListener('load', loadChatHistoryFromServer);
+    console.log("Session ID:", sessionId);
 
-    ws.send(`${sessionId}|${userMessage}`);
+    window.addEventListener('load', loadChatHistoryFromServer);
 
     ws.onmessage = async function(event) {
       if (typingMessageDiv) {
@@ -103,6 +109,13 @@
       }
 
       var message = event.data.trim();
+      console.log("Raw WebSocket message received:", message);
+
+      const messageParts = message.split("|");
+      if (messageParts.length > 1) {
+        message = messageParts.slice(1).join("|");
+      }
+      console.log("Processed message: ", message);
 
       if (lastUserMessageDiv && !isNewUserInput){
           var shouldAddSpace = true;
@@ -119,15 +132,20 @@
         messageDiv.className = "chat-message ai-response";
         messageDiv.innerHTML = message;
         chatHistory.appendChild(messageDiv);
+
         await saveMessageToServer(message, 'assistant');
+
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+
         isNewUserInput = true;
       }
 
-      chatHistory.scrollTop = chatHistory.scrollHeight;
+      console.log("Received message: ", event.data);
     };
 
     ws.onerror = function(error) {
       console.log("Websocket error:", error);
+      sendButton.disabled = true;
     }
 
     function autoResize(textarea) {
@@ -157,15 +175,23 @@
     }; 
 
     userInput.addEventListener('keypress', function(event) {
-      if (event.key === 'Enter' && !event.shiftkey) {
+      if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         sendButton.click();
       }
     });
 
     sendButton.onclick = async function() {
+      if (ws.readyState !== WebSocket.OPEN) {
+        alert("Connection to server lost. Please refresh the page.");
+        return;
+      }
+
       const userMessage = userInput.value.trim();
       const formData = new FormData();
+
+      ws.send(`${sessionId}|${userMessage}`);
+      console.log("Sending message: ", `${sessionId}|${userMessage}`);
 
       if (!userMessage && !selectedImageFile) {
         alert("Please enter a message or select an image.");
@@ -194,7 +220,7 @@
             imageMessageDiv.className = "chat-message user-input";
             imageMessageDiv.innerHTML = `<img src="${data.file_url}" alt="Uploaded Image" style="max-width: 50px">`;
             chatHistory.appendChild(imageMessageDiv);
-            ws.send(data.file_url);
+            ws.send(`${sessionId}|${data.file_url}`);
           }
           if (userMessage) {
             const userInputDiv = document.createElement("div");
@@ -202,7 +228,6 @@
             userInputDiv.textContent = userMessage;
             chatHistory.appendChild(userInputDiv);
             lastUserMessageDiv = userInputDiv;
-            ws.send(userMessage);
           }
           if (typingMessageDiv) {
             typingMessageDiv.remove();

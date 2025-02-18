@@ -420,6 +420,24 @@ INSERT INTO `user` (`user_id`, `user_time`, `user_image`, `user_tc`, `user_name`
 (8, '2023-05-02 19:47:37', NULL, NULL, 'test test', 'test@test.com', '0500 000 00 00', '25d55ad283aa400af464c76d713c07ad', 'Türkiye', 'İstanbul', 'Fatih', NULL, '1', 1),
 (9, '2023-05-05 15:10:52', NULL, NULL, 'test1', 'test1@test.com', NULL, 'e99a18c428cb38d5f260853678922e03', NULL, NULL, NULL, NULL, '1', 1);
 
+-- --------------------------------------------------------
+
+-- 
+-- Table structure for `chat_history`
+--
+
+CREATE TABLE `chat_history` (
+  `message_id` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `session_id` varchar(100) NOT NULL,
+  `message_type` varchar(20) NOT NULL,
+  `content` varchar(2000) NOT NULL,
+  `timestamp` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+)
+
+CREATE INDEX idx_session ON chat_history (session_id);
+
+-- --------------------------------------------------------
+
 --
 -- Indexes for dumped tables
 --

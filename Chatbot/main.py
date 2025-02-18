@@ -1,6 +1,7 @@
 from collections import defaultdict
 import http
 import shutil
+import traceback
 from openai import OpenAI
 from fastapi import FastAPI, Form, Request, File, UploadFile, WebSocket, Depends, HTTPException, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -10,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Column, DateTime, Integer, String, Float, func, or_
 from databases import Database
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.future import select
 from fastapi.middleware.cors import CORSMiddleware
 from markdown import markdown
@@ -271,6 +272,7 @@ async def is_small_talk(input_text):
 @app.post("/chat/save")
 async def save_message(message: ChatMessage, db: AsyncSession = Depends(get_db)):
     try:
+        logging.info(f"Saving message: {message.session_id}, {message.message_type}, {message.content}")
         new_message = ChatHistoryDB(
             session_id=message.session_id,
             message_type=message.message_type,
@@ -281,7 +283,7 @@ async def save_message(message: ChatMessage, db: AsyncSession = Depends(get_db))
         return {"sucess": True}
     except Exception as e:
         await db.rollback()
-        logging.error(f"Error saving message: {str(e)}")
+        logging.error(f"Error saving message: {str(e)}\nTraceback: ")
         raise HTTPException(status_code=500, detail=str(e))
     
 
@@ -306,13 +308,20 @@ async def get_chat_history(session_id: str, db: AsyncSession = Depends(get_db)):
         )
             
     except Exception as e:
+        await db.rollback()
         logging.error(f"Error getting chat history: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+async_session = async_sessionmaker(get_db, expire_on_commit=False)
 
 @app.websocket("/ws")
 async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
     try:
         await websocket.accept()
+
+        session_id = str(uuid.uuid4())
+
+        await websocket.send_text(f"{session_id}|Welcome! How can I assist you today?")
 
         message_objects = [{
             "role": "system",
@@ -340,12 +349,15 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
         while True:            
             try:
                 data = await websocket.receive_text()
-                # Parse session_id and user_input from the received data
+                logging.info(f"Received Websocket data: {data}")
+                if "|" not in data:
+                    await websocket.send_text(f"{session_id}|Invalid message format.")
+                    continue
                 session_id, user_input = data.split("|", 1)
-                
+
                 if not user_input:
                     continue
-
+                
                 # Save user message to database - Fixed to use ChatHistoryDB
                 new_user_message = ChatHistoryDB(
                     session_id=session_id,
@@ -365,7 +377,7 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                     )
                     db.add(new_ai_message)
                     await db.commit()
-                    await websocket.send_text(ai_response)
+                    await websocket.send_text(f"{session_id}|{ai_response}")
                     continue
 
                 message_objects.append({
@@ -385,22 +397,22 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         )
                         db.add(new_error_message)
                         await db.commit()
-                        await websocket.send_text(error_message)
+                        await websocket.send_text(f"{session_id}|{error_message}")
                         continue
 
                     response = openai.chat.completions.create(
-                        model="gpt-3-5-turbo",
+                        model="gpt-3.5-turbo",
                         messages=[{"role": "user", "content": clothing_features}],
                         temperature=0.5
                     )
                 else:
                     response = openai.chat.completions.create(
-                        model="gpt-3-5-turbo",
+                        model="gpt-3.5-turbo",
                         messages=message_objects,
                         temperature=0.5
                     )
 
-                ai_response = response.choices[0].message.constent.strip()
+                ai_response = response.choices[0].message.content.strip()
 
                 message_objects.append({
                     "role": "assistant",
@@ -420,7 +432,7 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                             f"\n![Product Image]({row['photo']})\n"
                             f"\n- **{row['product']}** for IDR{row['price']}\n"
                             f"\n**{row['description']}**\n"
-                            f"\n- Available in this sizes: {', '.join(row['sizes'].split(','))}\n"
+                            f"\n- Available in this sizes: {', '.join(row['size'].split(','))}\n"
                             f"\n - <a href='{row['link']}' target='_top'>Buy Now</a>\n"
                         )
                 else:
@@ -437,11 +449,12 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
 
                 # Send the rendered markdown response
                 complete_response_html = render_markdown(complete_response)
-                await websocket.send_text(complete_response_html)
+                await websocket.send_text(f"{session_id}|{complete_response_html}")
 
             except Exception as e:
+                logging.error(f"Error is message processing: {str(e)}\nTraceback: {traceback.format_exc()}")
                 error_message = "I apologize, but I encountered an error processing your message."
-                if 'session_id' in locals():
+                try:
                     new_error_message = ChatHistoryDB(
                         session_id=session_id,
                         message_type="assistant",
@@ -449,11 +462,16 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                     )
                     db.add(new_error_message)
                     await db.commit()
-                await websocket.send_text(error_message)
-                print(f"Error in message processing: {str(e)}")          
+                    await websocket.send_text(f"{session_id}|{error_message}")
+                except Exception as error_handling_error:
+                    logging.error(f"Error handling error: {str(error_handling_error)}")
+                    await websocket.send_text(f"{session_id}|An unexpected error occured.")
+                         
     except WebSocketDisconnect:
+        logging.info(f"Websocket disconnected for session {session_id}")
         print("WebSocket disconnected")
     except Exception as e:
+        logging.info(f"Websocket error: {str(e)}\nTraceback: {traceback.format_exc()}")
         print(f"WebSocket error: {str(e)}")
         try:
             await websocket.close()
