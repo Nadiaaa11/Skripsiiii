@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import Counter, defaultdict
 import http
 import shutil
 import traceback
@@ -9,7 +9,7 @@ from slugify import slugify
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, DateTime, Integer, String, Float, func, or_
+from sqlalchemy import Column, DateTime, Integer, String, Float, case, desc, func, or_
 from databases import Database
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.future import select
@@ -116,24 +116,27 @@ def cosine_similarity(a, b):
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-nlp = spacy.load("en_core_web_sm")
+try:
+    nlp = spacy.load("en_core_web_lg")
+except OSError:
+    try:
+        nlp = spacy.load("en_core_web_sm")
+    except OSError:
+        import sys
+        print("Please install 'en_core_web_sm' or 'en_core_web_lg' spacy model.")
+        sys.exit()
 
-def extract_keywords_from_ai_response(ai_response: str):
-    doc = nlp(ai_response)  # Use spaCy for noun phrases and entities
-    keywords = set(chunk.text for chunk in doc.noun_chunks)  # Extract noun chunks
-    keywords.update(ent.text for ent in doc.ents)  # Add named entities
+# def extract_keywords_from_ai_response(ai_response: str):
+#     doc = nlp(ai_response)  # Use spaCy for noun phrases and entities
+#     keywords = set(chunk.text for chunk in doc.noun_chunks)  # Extract noun chunks
+#     keywords.update(ent.text for ent in doc.ents)  # Add named entities
 
-    # Use regex as a fallback to extract any remaining capitalized phrases
-    regex_keywords = re.findall(r'\b[A-Z][a-z]*(?:\s[A-Z][a-z]*)*\b', ai_response)
-    keywords.update(regex_keywords)
+#     # Use regex as a fallback to extract any remaining capitalized phrases
+#     regex_keywords = re.findall(r'\b[A-Z][a-z]*(?:\s[A-Z][a-z]*)*\b', ai_response)
+#     keywords.update(regex_keywords)
     
-    return list(keywords)
-
-def render_markdown(text: str) -> str:
-    html_content = markdown(text)
-    return html_content
-
-stop_words = [
+#     return list(keywords)
+stop_words = set([
     "a", "an", "and", "are", "as", "at", "be", "but", "by", 
     "for", "if", "in", "into", "is", "it", "its", "of", "on", 
     "or", "so", "such", "that", "the", "their", "then", 
@@ -148,32 +151,160 @@ stop_words = [
     "over", "under", "more", "less", "up", "down", "out", 
     "around", "just", "only", "even", "always", "never", 
     "not", "can", "could", "should", "would", "might", 
-    "must", "shall", "may", "perhaps", "often", "sometimes", 
-    "always", "usually"
-]
+    "must", "shall", "may", "perhaps", "often", "sometimes",
+    "always", "usually", "great", "very", "really", "sure"
+])
 
-async def fetch_products_from_db(db: AsyncSession, keywords: list[str]):
-    relevant_keywords = [kw for kw in keywords if len(kw) > 2 and kw.lower() not in stop_words]
+# Constant for scoring
+USER_KEYWORD_BOOST = 3.0
+MULTI_WORD_USER_BOOST = 2.0
+MULTI_WORD_AI_BOOST = 0.5
+POSITION_WEIGHT = 0.3
+FREQUENCY_WEIGHT = 0.5
+POS_WEIGHT = 0.2
 
-    query = (
-        select(Product, ProductVariant, ProductPhoto)
-        .join(ProductVariant, Product.product_id == ProductVariant.product_id)
-        .join(ProductPhoto, Product.product_id == ProductPhoto.product_id)
-        .where(
-            or_(*[Product.product_name.ilike(f"%{keyword}%") for keyword in relevant_keywords]),
-                ProductVariant.stock > 0  # Ensure product is available in stock
+def extract_ranked_keywords(ai_response: str, user_input: str = None):
+    if not ai_response:
+        return []
+
+    keyword_scores = {}
+    doc_ai = nlp(ai_response)
+
+    # Extract keywords from AI response
+    ai_noun_chunks = [
+        chunk.text.lower() for chunk in doc_ai.noun_chunks 
+        if len(chunk.text) > 2 and not any(token.lower_ in stop_words or token.pos_ == 'PRON' for token in chunk)
+    ]
+    ai_entities = [
+        ent.text.lower() for ent in doc_ai.ents 
+        if len(ent.text) > 2 and not any(token.lower_ in stop_words or token.pos_ == 'PRON' for token in ent)
+    ]
+    ai_pos_keywords = [
+        token.text.lower() for token in doc_ai 
+        if token.pos_ in ['NOUN', 'PROPN', 'ADJ'] 
+        and len(token.text) > 2 
+        and token.text.lower() not in stop_words
+    ]
+    all_ai_keywords = ai_noun_chunks + ai_entities + ai_pos_keywords
+    ai_keyword_freq = Counter(all_ai_keywords)
+
+    # Initialize keyword scores with AI keywords
+    for i, token in enumerate(doc_ai):
+        token_text = token.text.lower()
+        if len(token_text) < 3 or token_text in stop_words:
+            continue
+
+        # Frequency score
+        freq_score = ai_keyword_freq.get(token_text, 0)
+        # Position score
+        position_score = 1.0 - (i / len(doc_ai))
+        # POS score
+        pos_score = {'PROPN': 3, 'NOUN': 2, 'ADJ': 1}.get(token.pos_, 0)
+        # Final score
+        ai_score = (freq_score * FREQUENCY_WEIGHT) + (position_score * POSITION_WEIGHT) + (pos_score * POS_WEIGHT)
+        # Update keyword scores
+        keyword_scores[token_text] = keyword_scores.get(token_text, 0) + ai_score
+
+    # Boost multi-word AI phrases
+    for chunk in ai_noun_chunks:
+        if ' ' in chunk and len(chunk.split()) <= 3:  # Ensure capturing multi-word keywords like "wrap tops"
+            freq_score = ai_keyword_freq.get(chunk, 0)
+            keyword_scores[chunk] = keyword_scores.get(chunk, 0) + freq_score * FREQUENCY_WEIGHT + MULTI_WORD_AI_BOOST
+
+    # Process user input if provided
+    if user_input and isinstance(user_input, str) and not user_input.startswith(("http://", "https://")):
+        doc_user = nlp(user_input)
+        user_noun_chunks = [
+            chunk.text.lower() for chunk in doc_user.noun_chunks 
+            if len(chunk.text) > 2 and not any(token.lower_ in stop_words or token.pos_ == 'PRON' for token in chunk)
+        ]
+        user_entities = [
+            ent.text.lower() for ent in doc_user.ents 
+            if len(ent.text) > 2 and not any(token.lower_ in stop_words or token.pos_ == 'PRON' for token in ent)
+        ]
+        user_pos_keywords = [
+            token.text.lower() for token in doc_user 
+            if token.pos_ in ['NOUN', 'PROPN', 'ADJ'] 
+            and len(token.text) > 2 
+            and token.text.lower() not in stop_words
+        ]
+        all_user_keywords = user_noun_chunks + user_entities + user_pos_keywords
+        user_keyword_freq = Counter(all_user_keywords)
+
+        # Update keyword scores with user keywords and apply boost
+        for word, count in user_keyword_freq.items():
+            keyword_scores[word] = keyword_scores.get(word, 0) + (count * USER_KEYWORD_BOOST)
+        
+        # Boost multi-word user phrases
+        for chunk in user_noun_chunks:
+            if ' ' in chunk and len(chunk.split()) <= 3:
+                keyword_scores[chunk] = keyword_scores.get(chunk, 0) + MULTI_WORD_USER_BOOST
+
+    # Sort keywords by score
+    ranked_keywords = sorted(keyword_scores.items(), key=lambda x: x[1], reverse=True)
+
+    return ranked_keywords
+
+def render_markdown(text: str) -> str:
+    html_content = markdown(text)
+    return html_content
+
+
+async def fetch_products_from_db(db: AsyncSession, ranked_keywords: list[str], max_results=5):
+    # Filter out irrelevant keywords
+    relevant_keywords = [(kw, score) for kw, score in ranked_keywords if len(kw) > 2 and kw.lower() not in stop_words]
+
+    if not relevant_keywords:
+        query = (
+            select(Product, ProductVariant, ProductPhoto)
+            .join(ProductVariant, Product.product_id == ProductVariant.product_id)
+            .join(ProductPhoto, Product.product_id == ProductPhoto.product_id)
+            .where(ProductVariant.stock > 0)
+            .order_by(func.rand())
+            .limit(max_results)
         )
-        .order_by(func.rand())
-        .limit(10)
-    )
-    
+    else:
+        match_conditions = []
+        for keyword, score in relevant_keywords[:10]:  # Consider only top 10 keywords for performance
+            exact_match = Product.product_name.ilike(f"{keyword}")
+            starts_with = Product.product_name.ilike(f"{keyword}%")
+            contains = Product.product_name.ilike(f"%{keyword}%")
+            desc_match = Product.product_detail.ilike(f"%{keyword}%")
+
+            match_conditions.extend([
+                (exact_match, score * 2.0),         # Exact matches get highest weight
+                (starts_with, score * 1.5),         # Starting with keyword gets good weight
+                (contains, score * 1.0),            # Contains keyword gets base weight
+                (desc_match, score * 0.5)           # Description matches get lowest weight
+            ])
+
+        ranking_case = case(*[(condition, weight) for condition, weight in match_conditions], else_=0)
+
+        query = (
+            select(Product, ProductVariant, ProductPhoto, ranking_case.label("relevance"))
+            .join(ProductVariant, Product.product_id == ProductVariant.product_id)
+            .join(ProductPhoto, Product.product_id == ProductPhoto.product_id)
+            .where(
+                or_(*[condition for condition, _ in match_conditions]),  # Ensure at least one keyword match
+                ProductVariant.stock > 0  # Ensure product is available
+            )
+            .order_by(desc("relevance"), func.rand())  # Order by relevance, random for ties
+            .limit(max_results)
+        )
+
     result = await db.execute(query)
     products = result.fetchall()
 
     product_list = []
     seen_products = set()
-
-    for product, variant, photo in products:
+    
+    for row in products:
+        if len(row) == 4:  # Query with relevance score
+            product, variant, photo, relevance = row
+        else:  # Fallback query without relevance
+            product, variant, photo = row
+            relevance = 0
+            
         if product.product_id not in seen_products:
             product_data = {
                 "product_id": product.product_id,
@@ -183,6 +314,7 @@ async def fetch_products_from_db(db: AsyncSession, keywords: list[str]):
                 "size": variant.size,
                 "color": variant.color,
                 "stock": variant.stock,
+                "relevance_score": float(relevance) if relevance else 0.0,
                 "link": f"http://localhost/e-commerce-main/product-{product.product_seourl}-{product.product_id}",
                 "photo": photo.productphoto_path
             }
@@ -280,7 +412,7 @@ async def save_message(message: ChatMessage, db: AsyncSession = Depends(get_db))
         )
         db.add(new_message)
         await db.commit()
-        return {"sucess": True}
+        return {"success": True}
     except Exception as e:
         await db.rollback()
         logging.error(f"Error saving message: {str(e)}\nTraceback: ")
@@ -331,7 +463,8 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                 "and avoid using structured JSON or code format. Instead, communicate recommendations in conversational sentences.\n\n"
                 "When giving recommendations, mention specific clothing items and how they would suit the user's attributes, "
                 "such as height, weight, and skin tone. Use descriptive phrases and consider mentioning outfit ideas for casual occasions, "
-                "unless the user specifies a different occasion.\n\n"
+                "unless the user specifies a different occasion.\n"
+                "give at least 3 items recommendation.\n\n"
                 "make each clothing item as a bold text and for the explanation make it as a paragraph and in different line from the title, for new or different item make it in different line."
                 "Example response:\n"
                 "For casual wear, here are some styles that would look great on you:  \n"
@@ -420,20 +553,24 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                 })
                 
                 # Extract keywords and fetch products
-                keywords = extract_keywords_from_ai_response(ai_response if not user_input.startswith(("http://", "https://")) else clothing_features)
-                recommended_products = await fetch_products_from_db(db, keywords)
+                ranked_keywords = extract_ranked_keywords(ai_response if not user_input.startswith(("http://", "https://")) else clothing_features)
+                recommended_products = await fetch_products_from_db(db, ranked_keywords)
 
                 complete_response = ai_response
 
                 if not recommended_products.empty:
+                    top_keywords = [kw for kw, _ in ranked_keywords[:3]]
+                    print(f"Top keywords: {top_keywords}")
+
                     complete_response += "\n\nI found these prodcuts I would recommend: \n"
+
                     for _, row in recommended_products.iterrows():
                         complete_response += (
                             f"\n![Product Image]({row['photo']})\n"
-                            f"\n- **{row['product']}** for IDR{row['price']}\n"
+                            f"\n**{row['product']}** for IDR{row['price']}\n"
                             f"\n**{row['description']}**\n"
-                            f"\n- Available in this sizes: {', '.join(row['size'].split(','))}\n"
-                            f"\n - <a href='{row['link']}' target='_top'>Buy Now</a>\n"
+                            f"\nAvailable in this sizes: {', '.join(row['size'].split(','))}\n"
+                            f"\n<a href='{row['link']}' target='_blank' class='product-link'>Buy Now</a>\n"
                         )
                 else:
                     complete_response += "\n\nSorry, I couldn't find any products that match your description."
