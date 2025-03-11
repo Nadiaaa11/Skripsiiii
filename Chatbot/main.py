@@ -2,6 +2,7 @@ from collections import Counter, defaultdict
 import http
 import shutil
 import traceback
+from googletrans import Translator
 from openai import OpenAI
 from fastapi import FastAPI, Form, Request, File, UploadFile, WebSocket, Depends, HTTPException, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +19,9 @@ from markdown import markdown
 from datetime import datetime
 from typing import List
 from pydantic import BaseModel
+from langdetect import detect, lang_detect_exception
+from spacy_langdetect import LanguageDetector
+from spacy.language import Language
 import os
 import re
 import uuid
@@ -126,16 +130,6 @@ except OSError:
         print("Please install 'en_core_web_sm' or 'en_core_web_lg' spacy model.")
         sys.exit()
 
-# def extract_keywords_from_ai_response(ai_response: str):
-#     doc = nlp(ai_response)  # Use spaCy for noun phrases and entities
-#     keywords = set(chunk.text for chunk in doc.noun_chunks)  # Extract noun chunks
-#     keywords.update(ent.text for ent in doc.ents)  # Add named entities
-
-#     # Use regex as a fallback to extract any remaining capitalized phrases
-#     regex_keywords = re.findall(r'\b[A-Z][a-z]*(?:\s[A-Z][a-z]*)*\b', ai_response)
-#     keywords.update(regex_keywords)
-    
-#     return list(keywords)
 stop_words = set([
     "a", "an", "and", "are", "as", "at", "be", "but", "by", 
     "for", "if", "in", "into", "is", "it", "its", "of", "on", 
@@ -446,6 +440,39 @@ async def get_chat_history(session_id: str, db: AsyncSession = Depends(get_db)):
 
 async_session = async_sessionmaker(get_db, expire_on_commit=False)
 
+def detect_language(text):
+    lang = detect(text)
+    return lang
+
+translator = Translator()
+
+def translate_text(text, target_language):
+    translation = translator.translate(text, dest=target_language)
+    return translation.text
+
+@Language.factory("language_detector")
+def get_lang_detector(nlp, name):
+    return LanguageDetector()
+
+nlp_multilingual = spacy.load("xx_ent_wiki_sm")
+nlp_multilingual.add_pipe("language_detector", last=True)
+
+def extract_intent(user_input):
+    """Extracts keywords and handles multiple languages."""
+    doc = nlp_multilingual(user_input)
+    
+    # Detect language
+    detected_language = doc._.language['language']
+    
+    keywords = [chunk.text for chunk in doc.noun_chunks]
+    entities = [ent.text for ent in doc.ents]
+
+    return {
+        "language": detected_language,
+        "keywords": keywords,
+        "entities": entities
+    }
+
 @app.websocket("/ws")
 async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
     try:
@@ -453,7 +480,7 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
 
         session_id = str(uuid.uuid4())
 
-        await websocket.send_text(f"{session_id}|Welcome! How can I assist you today?")
+        await websocket.send_text(f"{session_id}|Selamat Datang! Bagaimana saya bisa membantu Anda hari ini?/n/nWelcome! How can I help you today?")
 
         message_objects = [{
             "role": "system",
@@ -461,6 +488,7 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                 "You are a fashion consultant. Your task is to provide detailed fashion recommendations "
                 "for users based on their appearance and style preferences. Respond in a friendly, natural tone "
                 "and avoid using structured JSON or code format. Instead, communicate recommendations in conversational sentences.\n\n"
+                "Always ask for their weight and height, skin tone, their ethnical background and use this information as a base for your recommendations."
                 "When giving recommendations, mention specific clothing items and how they would suit the user's attributes, "
                 "such as height, weight, and skin tone. Use descriptive phrases and consider mentioning outfit ideas for casual occasions, "
                 "unless the user specifies a different occasion.\n"
@@ -475,9 +503,8 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                 "- Graphic Tees  \n– These are always in style and add personality to any casual outfit. You could go for retro or minimalist designs in colors that complement your skin tone.  \n\n"
                 "Ask the user if these styles align with their preferences or if they have any specific style they would like to focus on."
                 "Do not mention any specific brand of clothing"
-                "Always ask for user opinion after each suggestion"
-            )
-        }]
+                "Always ask for user opinion after each suggestion, always use a yes or no question to ask the user opinion")
+            }]
 
         while True:            
             try:
@@ -490,7 +517,20 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
 
                 if not user_input:
                     continue
-                
+
+                user_language = detect_language(user_input)
+                user_intent = extract_intent(user_input)
+                detected_language = user_intent["language"]
+
+                if user_language == 'id':
+                    try:
+                        translated_input = translate_text(user_input, 'en')
+                    except Exception as e:
+                        translated_input = user_input  # Fallback to original text
+                        logging.error(f"Translation failed: {str(e)}")
+                else:
+                    translated_input = user_input
+
                 # Save user message to database - Fixed to use ChatHistoryDB
                 new_user_message = ChatHistoryDB(
                     session_id=session_id,
@@ -515,7 +555,7 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
 
                 message_objects.append({
                     "role": "user",
-                    "content": user_input,
+                    "content": translated_input,
                 })
 
                 if user_input.startswith(("http://", "https://")):
@@ -551,62 +591,95 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                     "role": "assistant",
                     "content": ai_response
                 })
-                
-                # Extract keywords and fetch products
-                ranked_keywords = extract_ranked_keywords(ai_response if not user_input.startswith(("http://", "https://")) else clothing_features)
-                recommended_products = await fetch_products_from_db(db, ranked_keywords)
 
-                complete_response = ai_response
-
-                if not recommended_products.empty:
-                    top_keywords = [kw for kw, _ in ranked_keywords[:3]]
-                    print(f"Top keywords: {top_keywords}")
-
-                    complete_response += "\n\nI found these prodcuts I would recommend: \n"
-
-                    for _, row in recommended_products.iterrows():
-                        complete_response += (
-                            f"\n![Product Image]({row['photo']})\n"
-                            f"\n**{row['product']}** for IDR{row['price']}\n"
-                            f"\n**{row['description']}**\n"
-                            f"\nAvailable in this sizes: {', '.join(row['size'].split(','))}\n"
-                            f"\n<a href='{row['link']}' target='_blank' class='product-link'>Buy Now</a>\n"
-                        )
+                if user_language == 'id':
+                    translated_response = translate_text(ai_response, 'id')
                 else:
-                    complete_response += "\n\nSorry, I couldn't find any products that match your description."
+                    translated_response = ai_response
 
-                # When saving AI responses, use ChatHistoryDB
-                new_ai_message = ChatHistoryDB(
-                    session_id=session_id,
-                    message_type="assistant",
-                    content=complete_response
-                )
-                db.add(new_ai_message)
-                await db.commit()
+                ai_response_html = render_markdown(ai_response)
 
-                # Send the rendered markdown response
-                complete_response_html = render_markdown(complete_response)
-                await websocket.send_text(f"{session_id}|{complete_response_html}")
+                await websocket.send_text(f"{session_id}|{ai_response_html}\n\nApakah ini sesuai dengan apa yang preferensi Anda?\n\nDoes this allign with your preferences? (Yes/No)")
+                confirmation = await websocket.receive_text()
 
-            except Exception as e:
-                logging.error(f"Error is message processing: {str(e)}\nTraceback: {traceback.format_exc()}")
-                error_message = "I apologize, but I encountered an error processing your message."
-                try:
-                    new_error_message = ChatHistoryDB(
-                        session_id=session_id,
-                        message_type="assistant",
-                        content=error_message
-                    )
-                    db.add(new_error_message)
-                    await db.commit()
-                    await websocket.send_text(f"{session_id}|{error_message}")
-                except Exception as error_handling_error:
-                    logging.error(f"Error handling error: {str(error_handling_error)}")
-                    await websocket.send_text(f"{session_id}|An unexpected error occured.")
-                         
-    except WebSocketDisconnect:
-        logging.info(f"Websocket disconnected for session {session_id}")
-        print("WebSocket disconnected")
+                if "no" in confirmation.lower():
+                    user_intent = extract_intent(confirmation)
+                    if user_intent["keywords"]:
+                        clarification = f"Got it! You're looking for {', '.join(user_intent['keywords'])}. Let me tailor my recommendations."
+                        await websocket.send_text(f"{session_id}|{clarification}")
+                        # Optionally, add logic to fetch and display recommendations based on refined input
+                        ranked_keywords = extract_ranked_keywords(clarification)
+                        recommended_products = await fetch_products_from_db(db, ranked_keywords)
+
+                        complete_response = "Here are some recommendations based on your updated preferences:\n"
+                        if not recommended_products.empty:
+                            for _, row in recommended_products.iterrows():
+                                complete_response += (
+                                    f"\n![Product Image]({row['photo']})\n"
+                                    f"\n**{row['product']}** for IDR{row['price']}\n"
+                                    f"\n**{row['description']}**\n"
+                                    f"\nAvailable in these sizes: {', '.join(row['size'].split(','))}\n"
+                                    f"\n<a href='{row['link']}' target='_blank' class='product-link'>Buy Now</a>\n"
+                                )
+                        else:
+                            complete_response += "\n\nSorry, I couldn't find any products that match your updated preferences."
+
+                        # Translate if necessary and send the refined response
+                        detected_language = user_intent["language"]
+                        if detected_language == "id":
+                            complete_response = translate_text(complete_response, "id")
+                        await websocket.send_text(f"{session_id}|{complete_response}")
+
+                    else:
+                        await websocket.send_text(f"{session_id}|I see! Could you clarify what you're looking for?")
+                        # Optionally wait for additional user clarification input
+                        clarified_input = await websocket.receive_text()
+                        clarified_intent = extract_intent(clarified_input)
+                        await websocket.send_text(f"{session_id}|Got it! You're asking for {', '.join(clarified_intent['keywords'])}. Let me adjust!")
+                else:
+                    # Handle "yes" and other invalid inputs gracefully
+                    if confirmation.strip().lower() == "yes":
+                        # Extract keywords and fetch products
+                        ranked_keywords = extract_ranked_keywords(ai_response)
+                        recommended_products = await fetch_products_from_db(db, ranked_keywords)
+
+                        complete_response = "Great! Here are some products you might like:\n"
+
+                        if not recommended_products.empty:
+                            for _, row in recommended_products.iterrows():
+                                complete_response += (
+                                    f"\n![Product Image]({row['photo']})\n"
+                                    f"\n**{row['product']}** for IDR{row['price']}\n"
+                                    f"\n**{row['description']}**\n"
+                                    f"\nAvailable in these sizes: {', '.join(row['size'].split(','))}\n"
+                                    f"\n<a href='{row['link']}' target='_blank' class='product-link'>Buy Now</a>\n"
+                                )
+                        else:
+                            complete_response += "\n\nSorry, I couldn't find any products that match your description."
+
+                        # Translate response back if needed (Bahasa Indonesia handling)
+                        if detect_language(confirmation) == "id":
+                            complete_response = translate_text(complete_response, "id")
+
+                        # Save AI response to the database
+                        new_ai_message = ChatHistoryDB(
+                            session_id=session_id,
+                            message_type="assistant",
+                            content=complete_response
+                        )
+                        db.add(new_ai_message)
+                        await db.commit()
+
+                        # Send the response
+                        complete_response_html = render_markdown(complete_response)
+                        await websocket.send_text(f"{session_id}|{complete_response_html}")
+                    else:
+                        # Handle invalid responses
+                        await websocket.send_text(f"{session_id}|Please respond with 'Yes' or 'No'.")    
+                                      
+            except WebSocketDisconnect:
+                logging.info(f"Websocket disconnected for session {session_id}")
+                print("WebSocket disconnected")
     except Exception as e:
         logging.info(f"Websocket error: {str(e)}\nTraceback: {traceback.format_exc()}")
         print(f"WebSocket error: {str(e)}")
