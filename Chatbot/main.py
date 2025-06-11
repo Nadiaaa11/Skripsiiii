@@ -42,6 +42,31 @@ import spacy
 import cloudinary
 import cloudinary.uploader
 import logging
+import numpy as np
+import pandas as pd
+from datetime import datetime
+from typing import List, Dict, Tuple, Optional, Any
+import pickle
+import os
+import hashlib
+from datetime import datetime, timedelta
+import numpy as np
+
+try:
+    from sentence_transformers import SentenceTransformer, util
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+    print("✅ Sentence Transformers available")
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    print("⚠️ Sentence Transformers not available. Install with: pip install sentence-transformers")
+
+try:
+    from sklearn.metrics.pairwise import cosine_similarity
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+    print("⚠️ Scikit-learn not available. Install with: pip install scikit-learn")
 
 openai = OpenAI(
     api_key="sk-V4UGt-FNIde85D7t0zrvZbVG5eolZDsE8awXTAuJYgT3BlbkFJToj--_okCjQAcwzYu4ZC6JDX8kznTJhzruBhL9Q5YA"
@@ -66,6 +91,616 @@ DATABASE_URL = "mysql+aiomysql://root:@localhost:3306/ecommerce"
 engine = create_async_engine(DATABASE_URL, echo=True)
 
 database = Database(DATABASE_URL)
+
+class FashionSemanticSystem:
+    """
+    Enhanced semantic understanding system for fashion recommendations
+    Integrates with your existing keyword system
+    """
+    
+    def __init__(self):
+        self.model = None
+        self.product_embeddings = {}
+        self.product_cache = {}
+        self.embedding_cache = {}
+        self.cultural_context = self._build_indonesian_fashion_context()
+        self.fashion_vocabulary = self._build_fashion_vocabulary()
+        self.initialize_model()
+    
+    def initialize_model(self):
+        """Initialize the best available model for fashion understanding"""
+        if SENTENCE_TRANSFORMERS_AVAILABLE:
+            try:
+                # Try multilingual model first (supports Indonesian)
+                self.model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
+                print("✅ Loaded multilingual sentence transformer for Indonesian support")
+                return
+            except Exception as e:
+                print(f"⚠️ Failed to load multilingual model: {e}")
+                try:
+                    # Fallback to English model
+                    self.model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+                    print("✅ Loaded English sentence transformer")
+                    return
+                except Exception as e:
+                    print(f"⚠️ Failed to load sentence transformer: {e}")
+        
+        print("⚠️ Using fallback TF-IDF approach")
+        self.model = None
+    
+    def _build_indonesian_fashion_context(self):
+        """Build Indonesian-specific fashion context"""
+        return {
+            'traditional_wear': {
+                'batik': ['traditional', 'cultural', 'patterned', 'formal', 'Indonesian'],
+                'kebaya': ['traditional', 'formal', 'elegant', 'cultural', 'Indonesian'],
+                'sarong': ['traditional', 'casual', 'comfortable', 'wrap']
+            },
+            'climate_appropriate': {
+                'tropical': ['lightweight', 'breathable', 'cotton', 'linen', 'airy'],
+                'humid': ['moisture-wicking', 'quick-dry', 'loose-fit', 'ventilated'],
+                'hot_weather': ['light colors', 'short sleeves', 'sun protection', 'UV resistant']
+            },
+            'body_types': {
+                'petite': ['asian fit', 'small frame', 'proportional', 'fitted'],
+                'average': ['standard fit', 'regular', 'balanced'],
+                'curvy': ['flattering cut', 'comfortable fit', 'accentuating']
+            },
+            'local_preferences': {
+                'modest': ['covered', 'conservative', 'appropriate', 'respectful'],
+                'hijab_friendly': ['loose fit', 'long sleeves', 'high neck', 'modest'],
+                'work_appropriate': ['professional', 'modest', 'formal', 'office-suitable']
+            }
+        }
+    
+    def _build_fashion_vocabulary(self):
+        """Enhanced Indonesian-English fashion vocabulary mapping"""
+        return {
+            # Clothing types
+            'kaos': ['shirt', 't-shirt', 'top', 'tee', 'casual shirt'],
+            'kemeja': ['shirt', 'blouse', 'dress shirt', 'button-up', 'formal shirt'],
+            'celana': ['pants', 'trousers', 'bottoms', 'slacks'],
+            'jaket': ['jacket', 'blazer', 'coat', 'outerwear'],
+            'gaun': ['dress', 'gown', 'frock'],
+            'rok': ['skirt', 'bottom'],
+            'sepatu': ['shoes', 'footwear', 'sneakers', 'boots'],
+            
+            # Styles
+            'kasual': ['casual', 'relaxed', 'informal', 'everyday'],
+            'formal': ['formal', 'business', 'professional', 'dressy'],
+            'santai': ['comfortable', 'leisure', 'relaxed', 'easy-going'],
+            'elegan': ['elegant', 'sophisticated', 'classy', 'refined'],
+            'tradisional': ['traditional', 'cultural', 'ethnic', 'heritage'],
+            'modern': ['modern', 'contemporary', 'current', 'trendy'],
+            
+            # Colors
+            'hitam': ['black', 'dark'],
+            'putih': ['white', 'cream', 'ivory'],
+            'merah': ['red', 'crimson', 'scarlet'],
+            'biru': ['blue', 'navy', 'azure'],
+            'hijau': ['green', 'emerald', 'olive'],
+            'kuning': ['yellow', 'gold', 'amber'],
+            
+            # Fits and styles
+            'longgar': ['loose', 'oversized', 'relaxed fit', 'baggy'],
+            'ketat': ['tight', 'fitted', 'slim', 'body-hugging'],
+            'pas': ['perfect fit', 'just right', 'well-fitted'],
+        }
+    
+    def preprocess_fashion_text(self, text: str, user_profile: Optional[Dict] = None) -> str:
+        """
+        CLEANER preprocessing - don't over-expand for semantic search
+        """
+        if not text:
+            return ""
+        
+        # Keep the original text clean
+        enhanced_text = text.lower().strip()
+        
+        # Only add direct translations, not expansions
+        main_translations = {
+            'blazer': 'blazer jas',
+            'jas': 'blazer jas', 
+            'kemeja': 'kemeja shirt',
+            'shirt': 'kemeja shirt',
+            'celana': 'celana pants',
+            'pants': 'celana pants',
+            'rok': 'rok skirt',
+            'skirt': 'rok skirt',
+            'dress': 'dress gaun',
+            'gaun': 'dress gaun'
+        }
+        
+        # Check if text contains any main clothing items
+        for indonesian, translation in main_translations.items():
+            if indonesian in enhanced_text:
+                enhanced_text = translation
+                break
+        
+        # DON'T add cultural context for semantic search - keep it focused
+        print(f"   🧹 CLEAN PREPROCESSING: '{text}' → '{enhanced_text}'")
+        return enhanced_text
+    def get_semantic_embedding(self, text: str, use_cache: bool = True) -> np.ndarray:
+        """Get semantic embedding for text with caching"""
+        if use_cache and text in self.embedding_cache:
+            return self.embedding_cache[text]
+        
+        if self.model and SENTENCE_TRANSFORMERS_AVAILABLE:
+            # Use sentence transformer
+            embedding = self.model.encode([text], convert_to_tensor=False)[0]
+        elif SKLEARN_AVAILABLE:
+            # Fallback to TF-IDF
+            if not hasattr(self, 'tfidf_vectorizer'):
+                self.tfidf_vectorizer = TfidfVectorizer(max_features=300, stop_words='english')
+                # Initialize with some fashion terms
+                sample_texts = [
+                    "casual shirt comfortable style",
+                    "formal dress elegant evening",
+                    "traditional batik indonesian culture",
+                    "modern minimalist design simple"
+                ]
+                self.tfidf_vectorizer.fit(sample_texts)
+            
+            embedding = self.tfidf_vectorizer.transform([text]).toarray()[0]
+        else:
+            # Very basic fallback - word overlap
+            words = set(text.lower().split())
+            fashion_terms = set(['shirt', 'dress', 'pants', 'casual', 'formal', 'style'])
+            overlap = len(words.intersection(fashion_terms))
+            embedding = np.array([overlap / max(len(words), 1)])
+        
+        if use_cache:
+            self.embedding_cache[text] = embedding
+        
+        return embedding
+    
+    def calculate_semantic_similarity(self, text1: str, text2: str) -> float:
+        """Calculate semantic similarity between two texts"""
+        emb1 = self.get_semantic_embedding(text1)
+        emb2 = self.get_semantic_embedding(text2)
+        
+        if len(emb1) != len(emb2):
+            return 0.0
+        
+        # Calculate cosine similarity
+        if np.linalg.norm(emb1) == 0 or np.linalg.norm(emb2) == 0:
+            return 0.0
+        
+        similarity = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
+        return float(similarity)
+
+# Initialize the semantic system
+semantic_system = FashionSemanticSystem()
+
+class EnhancedSemanticProductMatcher:
+    """
+    Improved version with persistent embedding storage
+    """
+    
+    def __init__(self, semantic_system: FashionSemanticSystem):
+        self.semantic_system = semantic_system
+        self.product_embeddings = {}
+        self.products_df = None
+        self.embeddings_cache_dir = "embeddings_cache"
+        self.embeddings_file = os.path.join(self.embeddings_cache_dir, "product_embeddings.pkl")
+        self.products_file = os.path.join(self.embeddings_cache_dir, "products_data.pkl")
+        self.metadata_file = os.path.join(self.embeddings_cache_dir, "metadata.pkl")
+        
+        # Create cache directory if it doesn't exist
+        os.makedirs(self.embeddings_cache_dir, exist_ok=True)
+
+    def clean_semantic_query(self, query):
+        """
+        Clean semantic query from noise
+        """
+        # Remove numbers and numbered items
+        cleaned = re.sub(r'\b\d+\b', '', query)
+        
+        # Remove action words that don't help matching
+        noise_words = ['carikan', 'tunjukkan', 'show', 'find', 'cari', 'aja', 'saja', 'only']
+        words = cleaned.split()
+        
+        filtered_words = []
+        for word in words:
+            if word.lower() not in noise_words and len(word) > 1:
+                filtered_words.append(word)
+        
+        # Keep only the first 3-4 relevant words to avoid confusion
+        result = ' '.join(filtered_words[:4])
+        return result.strip()
+
+    def matches_main_category(query, product):
+        """
+        Check if product matches the main category in query
+        """
+        query_lower = query.lower()
+        product_name_lower = product['product_name'].lower()
+        product_detail_lower = product['product_detail'].lower()
+        
+        # Define category matching rules
+        category_rules = {
+            'blazer': ['blazer', 'jas'],
+            'jas': ['blazer', 'jas'],
+            'shirt': ['shirt', 'kemeja'],
+            'kemeja': ['shirt', 'kemeja'],  
+            'pants': ['pants', 'celana', 'trouser'],
+            'celana': ['pants', 'celana', 'trouser'],
+            'skirt': ['skirt', 'rok'],
+            'rok': ['skirt', 'rok'],
+            'dress': ['dress', 'gaun'],
+            'gaun': ['dress', 'gaun']
+        }
+        
+        for main_term, valid_terms in category_rules.items():
+            if main_term in query_lower:
+                # Product must contain at least one valid term
+                if any(term in product_name_lower or term in product_detail_lower 
+                    for term in valid_terms):
+                    return True
+                else:
+                    return False  # Wrong category
+        
+        return True  # No specific category detected, allow all
+
+    def semantic_search(self, query: str, top_k: int = 10, threshold: float = 0.3, 
+                   gender_filter: str = None, budget_range: tuple = None) -> list:
+        """
+        CLEANER semantic search with better product filtering
+        """
+        if self.products_df is None or self.products_df.empty:
+            print("⚠️ No products available for semantic search")
+            return []
+        
+        print(f"\n🔍 CLEAN SEMANTIC SEARCH")
+        print(f"   Query: '{query}'")
+        print(f"   Gender filter: {gender_filter}")
+        print(f"   Budget: {budget_range}")
+        
+        # Clean the query - remove numbers and irrelevant words
+        cleaned_query = self.clean_semantic_query(query)
+        print(f"   🧹 Cleaned query: '{cleaned_query}'")
+        
+        # Preprocess query with minimal expansion
+        enhanced_query = self.semantic_system.preprocess_fashion_text(cleaned_query)
+        print(f"   ✨ Enhanced query: '{enhanced_query}'")
+        
+        # Get query embedding
+        query_embedding = self.semantic_system.get_semantic_embedding(enhanced_query)
+        
+        # Calculate similarities with product pre-filtering
+        similarities = []
+        for _, product in self.products_df.iterrows():
+            product_id = product['product_id']
+            
+            if product_id in self.product_embeddings:
+                # PRE-FILTER: Skip products that don't match the main category
+                if not self.matches_main_category(cleaned_query, product):
+                    continue
+                    
+                product_embedding = self.product_embeddings[product_id]
+                
+                # Calculate semantic similarity
+                if self.semantic_system.model and SENTENCE_TRANSFORMERS_AVAILABLE:
+                    similarity = np.dot(query_embedding, product_embedding) / (
+                        np.linalg.norm(query_embedding) * np.linalg.norm(product_embedding)
+                    )
+                else:
+                    similarity = self.semantic_system.calculate_semantic_similarity(
+                        enhanced_query, product['enhanced_description']
+                    )
+                
+                similarities.append({
+                    'product_id': product_id,
+                    'similarity': float(similarity),
+                    'product_data': product
+                })
+        
+        # Sort by similarity
+        similarities.sort(key=lambda x: x['similarity'], reverse=True)    
+        # Apply filters
+        filtered_results = []
+        for result in similarities:
+            product_data = result['product_data']
+            
+            # Similarity threshold
+            if result['similarity'] < threshold:
+                continue
+            
+            # Gender filter
+            if gender_filter:
+                if gender_filter.lower() in ['female', 'woman', 'perempuan', 'wanita']:
+                    if product_data['gender'] != 'female':
+                        continue
+                elif gender_filter.lower() in ['male', 'man', 'pria', 'laki-laki']:
+                    if product_data['gender'] != 'male':
+                        continue
+            
+            # Budget filter
+            if budget_range:
+                min_price, max_price = budget_range
+                product_price = product_data['price']
+                
+                if min_price and product_price < min_price:
+                    continue
+                if max_price and product_price > max_price:
+                    continue
+            
+            # Format result to match your existing format
+            sizes = product_data['sizes'].split(',') if product_data['sizes'] else []
+            colors = product_data['colors'].split(',') if product_data['colors'] else []
+            
+            filtered_results.append({
+                'product_id': product_data['product_id'],
+                'product': product_data['product_name'],
+                'description': product_data['product_detail'],
+                'price': product_data['price'],
+                'size': ", ".join(sizes) if sizes else "N/A",
+                'color': ", ".join(colors) if colors else "N/A",
+                'stock': product_data['stock'],
+                'link': f"http://localhost/e-commerce-main/product-{product_data['seourl']}-{product_data['product_id']}",
+                'photo': product_data['photo'],
+                'relevance': result['similarity'],
+                'semantic_match': True
+            })
+            
+            if len(filtered_results) >= top_k:
+                break
+        
+        print(f"   Found {len(filtered_results)} semantic matches above threshold {threshold}")
+        if filtered_results:
+            print(f"   Top match: '{filtered_results[0]['product']}' (similarity: {filtered_results[0]['relevance']:.3f})")
+        
+        return filtered_results
+    
+    def _get_products_hash(self, products_data):
+        """Create a hash of product data to detect changes"""
+        # Create a string representation of key product info
+        product_info = []
+        for product in products_data:
+            info = f"{product[0]}_{product[1]}_{product[2]}_{product[5]}"  # id, name, detail, price
+            product_info.append(info)
+        
+        combined_info = "|".join(sorted(product_info))
+        return hashlib.md5(combined_info.encode()).hexdigest()
+    
+    def _save_embeddings_to_cache(self, products_hash):
+        """Save embeddings and product data to disk"""
+        try:
+            print("💾 Saving embeddings to cache...")
+            
+            # Save embeddings
+            with open(self.embeddings_file, 'wb') as f:
+                pickle.dump(self.product_embeddings, f)
+            
+            # Save products DataFrame
+            with open(self.products_file, 'wb') as f:
+                pickle.dump(self.products_df, f)
+            
+            # Save metadata
+            metadata = {
+                'products_hash': products_hash,
+                'created_at': datetime.now().isoformat(),
+                'model_type': 'sentence-transformers' if self.semantic_system.model else 'tfidf',
+                'total_products': len(self.products_df) if self.products_df is not None else 0
+            }
+            
+            with open(self.metadata_file, 'wb') as f:
+                pickle.dump(metadata, f)
+            
+            print(f"✅ Embeddings cached successfully ({metadata['total_products']} products)")
+            
+        except Exception as e:
+            print(f"❌ Error saving embeddings to cache: {str(e)}")
+    
+    def _load_embeddings_from_cache(self, current_products_hash):
+        """Load embeddings from disk if they're still valid"""
+        try:
+            # Check if all cache files exist
+            if not all(os.path.exists(f) for f in [self.embeddings_file, self.products_file, self.metadata_file]):
+                print("📂 Cache files not found")
+                return False
+            
+            # Load metadata first
+            with open(self.metadata_file, 'rb') as f:
+                metadata = pickle.load(f)
+            
+            # Check if cache is still valid
+            cached_hash = metadata.get('products_hash')
+            cache_age_hours = 0
+            
+            try:
+                created_at = datetime.fromisoformat(metadata.get('created_at', ''))
+                cache_age_hours = (datetime.now() - created_at).total_seconds() / 3600
+            except:
+                cache_age_hours = 999  # Force refresh if we can't parse date
+            
+            # Cache is invalid if:
+            # 1. Product data has changed (different hash)
+            # 2. Cache is older than 24 hours
+            # 3. Model type has changed
+            current_model_type = 'sentence-transformers' if self.semantic_system.model else 'tfidf'
+            cached_model_type = metadata.get('model_type', 'unknown')
+            
+            if (cached_hash != current_products_hash or 
+                cache_age_hours > 24 or 
+                cached_model_type != current_model_type):
+                
+                print(f"🔄 Cache invalid:")
+                print(f"   Products changed: {cached_hash != current_products_hash}")
+                print(f"   Cache age: {cache_age_hours:.1f}h (max: 24h)")
+                print(f"   Model changed: {cached_model_type} → {current_model_type}")
+                return False
+            
+            # Load embeddings and products
+            print("📂 Loading embeddings from cache...")
+            
+            with open(self.embeddings_file, 'rb') as f:
+                self.product_embeddings = pickle.load(f)
+            
+            with open(self.products_file, 'rb') as f:
+                self.products_df = pickle.load(f)
+            
+            print(f"✅ Loaded {len(self.product_embeddings)} embeddings from cache")
+            print(f"   Cache created: {metadata.get('created_at', 'unknown')}")
+            print(f"   Products: {metadata.get('total_products', 0)}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error loading embeddings from cache: {str(e)}")
+            return False
+    
+    async def preprocess_products(self, db: AsyncSession, force_refresh=False):
+        """
+        Create enhanced product descriptions for embedding with intelligent caching
+        """
+        print("\n🔄 SMART EMBEDDING PREPROCESSING")
+        print("="*50)
+        
+        try:
+            # Get current products from database
+            variant_subquery = (
+                select(
+                    ProductVariant.product_id,
+                    func.min(ProductVariant.product_price).label('min_price'),
+                    func.group_concat(ProductVariant.size.distinct()).label('available_sizes'),
+                    func.group_concat(ProductVariant.color.distinct()).label('available_colors'),
+                    func.sum(ProductVariant.stock).label('total_stock')
+                )
+                .where(ProductVariant.stock > 0)
+                .group_by(ProductVariant.product_id)
+                .subquery()
+            )
+            
+            query = (
+                select(
+                    Product.product_id, 
+                    Product.product_name, 
+                    Product.product_detail, 
+                    Product.product_seourl,
+                    Product.product_gender,
+                    variant_subquery.c.min_price,
+                    variant_subquery.c.available_sizes,
+                    variant_subquery.c.available_colors,
+                    variant_subquery.c.total_stock,
+                    ProductPhoto.productphoto_path
+                )
+                .select_from(Product)
+                .join(variant_subquery, Product.product_id == variant_subquery.c.product_id)
+                .join(ProductPhoto, Product.product_id == ProductPhoto.product_id)
+                .where(variant_subquery.c.total_stock > 0)
+            )
+            
+            result = await db.execute(query)
+            all_products = result.fetchall()
+            
+            if not all_products:
+                print("❌ No products found for preprocessing")
+                return
+            
+            print(f"📦 Found {len(all_products)} products in database")
+            
+            # Create hash of current products
+            current_products_hash = self._get_products_hash(all_products)
+            print(f"🔢 Products hash: {current_products_hash[:8]}...")
+            
+            # Try to load from cache first (unless forced refresh)
+            if not force_refresh and self._load_embeddings_from_cache(current_products_hash):
+                print("🚀 Using cached embeddings - FAST STARTUP!")
+                print("="*50)
+                return
+            
+            # Cache miss or forced refresh - create new embeddings
+            print("🔄 Creating new embeddings...")
+            print("   This will take 2-5 minutes for the first time...")
+            
+            # Create enhanced product descriptions
+            enhanced_descriptions = []
+            product_data = []
+            
+            for i, product_row in enumerate(all_products):
+                if i % 100 == 0 and i > 0:
+                    print(f"   📝 Processing product descriptions: {i}/{len(all_products)}")
+                
+                # Enhanced description combining all available information
+                desc = f"{product_row[1]} {product_row[2]}"
+                
+                # Add attributes from variants
+                if product_row[7]:  # colors
+                    colors = product_row[7].split(',')
+                    desc += f" colors: {' '.join(colors)}"
+                
+                if product_row[6]:  # sizes
+                    sizes = product_row[6].split(',') 
+                    desc += f" sizes: {' '.join(sizes)}"
+                
+                # Add gender
+                desc += f" gender: {product_row[4]}"
+                
+                # Preprocess with cultural context
+                enhanced_desc = self.semantic_system.preprocess_fashion_text(desc)
+                enhanced_descriptions.append(enhanced_desc)
+                
+                product_data.append({
+                    "product_id": product_row[0],
+                    "product_name": product_row[1],
+                    "product_detail": product_row[2],
+                    "price": product_row[5],
+                    "gender": product_row[4],
+                    "sizes": product_row[6],
+                    "colors": product_row[7],
+                    "stock": product_row[8],
+                    "photo": product_row[9],
+                    "seourl": product_row[3],
+                    "enhanced_description": enhanced_desc
+                })
+            
+            self.products_df = pd.DataFrame(product_data)
+            print(f"📋 Created product DataFrame with {len(self.products_df)} products")
+            
+            # Generate embeddings for all products
+            print(f"🧠 Generating embeddings ({len(enhanced_descriptions)} products)...")
+            start_time = datetime.now()
+            
+            self.product_embeddings = {}
+            
+            for i, desc in enumerate(enhanced_descriptions):
+                if i % 50 == 0:
+                    elapsed = (datetime.now() - start_time).total_seconds()
+                    if i > 0:
+                        rate = i / elapsed
+                        remaining = (len(enhanced_descriptions) - i) / rate
+                        print(f"   Progress: {i}/{len(enhanced_descriptions)} ({i/len(enhanced_descriptions)*100:.1f}%) - ETA: {remaining:.0f}s")
+                
+                embedding = self.semantic_system.get_semantic_embedding(desc, use_cache=True)
+                self.product_embeddings[self.products_df.iloc[i]['product_id']] = embedding
+            
+            total_time = (datetime.now() - start_time).total_seconds()
+            print(f"✅ Generated {len(self.product_embeddings)} embeddings in {total_time:.1f}s")
+            
+            # Save to cache for next time
+            self._save_embeddings_to_cache(current_products_hash)
+            
+            print("="*50)
+            
+        except Exception as e:
+            logging.error(f"Error in enhanced preprocess_products: {str(e)}")
+            print(f"❌ Error preprocessing products: {str(e)}")
+
+        
+    
+    def clear_cache(self):
+        """Clear the embeddings cache"""
+        try:
+            for file_path in [self.embeddings_file, self.products_file, self.metadata_file]:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            print("🗑️ Embeddings cache cleared")
+        except Exception as e:
+            print(f"❌ Error clearing cache: {str(e)}")
+
+# Initialize enhanced product matcher
+enhanced_matcher = EnhancedSemanticProductMatcher(semantic_system)
 
 class Product(Base):
     __tablename__ = "product"
@@ -453,6 +1088,64 @@ def extract_ranked_keywords(ai_response: str = None, translated_input: str = Non
     extract_ranked_keywords.last_exclusions = list(global_exclusions)
     
     return ranked_keywords[:15]
+
+def enhanced_extract_ranked_keywords(ai_response: str = None, translated_input: str = None, 
+                                   accumulated_keywords=None, use_semantic: bool = True):
+    """
+    Enhanced version of your extract_ranked_keywords that adds semantic understanding
+    """
+    print("\n" + "="*70)
+    print("🔤 ENHANCED SEMANTIC KEYWORD EXTRACTION")
+    print("="*70)
+    
+    # Use your existing extraction logic as base
+    base_keywords = extract_ranked_keywords(ai_response, translated_input, accumulated_keywords)
+    
+    if not use_semantic or not base_keywords or not semantic_system.model:
+        return base_keywords
+    
+    # Enhance with semantic expansion
+    enhanced_keywords = []
+    semantic_expansions = 0
+    
+    for keyword, score in base_keywords:
+        # Add original keyword
+        enhanced_keywords.append((keyword, score))
+        
+        # Semantic expansion for fashion terms
+        if any(fashion_term in keyword.lower() for fashion_term in 
+               ['kemeja', 'celana', 'dress', 'kaos', 'jaket', 'formal', 'casual']):
+            
+            # Find semantically similar terms
+            fashion_terms = [
+                'shirt', 'blouse', 'top', 'dress', 'pants', 'skirt', 'jacket', 
+                'casual', 'formal', 'elegant', 'modern', 'traditional'
+            ]
+            
+            for term in fashion_terms:
+                if term != keyword.lower():
+                    similarity = semantic_system.calculate_semantic_similarity(keyword, term)
+                    if similarity > 0.6:  # High similarity threshold
+                        expansion_score = score * similarity * 0.7  # Reduced score for expansions
+                        enhanced_keywords.append((term, expansion_score))
+                        semantic_expansions += 1
+                        print(f"   🧠 Semantic expansion: '{keyword}' → '{term}' (sim: {similarity:.2f})")
+    
+    # Remove duplicates and sort
+    keyword_dict = {}
+    for keyword, score in enhanced_keywords:
+        if keyword in keyword_dict:
+            keyword_dict[keyword] = max(keyword_dict[keyword], score)
+        else:
+            keyword_dict[keyword] = score
+    
+    final_keywords = sorted(keyword_dict.items(), key=lambda x: x[1], reverse=True)
+    
+    print(f"   🧠 Added {semantic_expansions} semantic expansions")
+    print(f"   📊 Total enhanced keywords: {len(final_keywords)}")
+    print("="*70)
+    
+    return final_keywords[:20]  # Return top 20
 
 def get_search_terms_for_keyword(keyword):
     """
@@ -1392,7 +2085,750 @@ async def fetch_products_with_budget_awareness(db: AsyncSession, top_keywords: l
         logging.error(f"Error in fetch_products_with_budget_awareness: {str(e)}")
         # Always return a tuple, even on error
         return pd.DataFrame(), "error"
+    
+async def enhanced_fetch_products_with_semantic(db: AsyncSession, top_keywords: list, 
+                                              max_results=15, gender_category=None, 
+                                              budget_range=None, use_semantic=True):
+    """
+    SAFE VERSION: Falls back gracefully if semantic search fails
+    """
+    print("\n" + "="*80)
+    print("🔍 SAFE ENHANCED PRODUCT SEARCH")
+    print("="*80)
+    
+    # Try semantic search first if available
+    if use_semantic and semantic_system.model:
+        try:
+            # Check if semantic_search method exists
+            if hasattr(enhanced_matcher, 'semantic_search'):
+                # Ensure products are preprocessed
+                if enhanced_matcher.products_df is None:
+                    print("🔄 First-time product preprocessing...")
+                    await enhanced_matcher.preprocess_products(db)
                 
+                # Create semantic query from keywords
+                if top_keywords:
+                    top_terms = [kw for kw, _ in top_keywords[:10]]
+                    semantic_query = " ".join(top_terms)
+                    
+                    print(f"🧠 Semantic query: '{semantic_query}'")
+                    
+                    # Perform semantic search
+                    semantic_results = enhanced_matcher.semantic_search(
+                        query=semantic_query,
+                        top_k=max_results,
+                        threshold=0.2,
+                        gender_filter=gender_category,
+                        budget_range=budget_range
+                    )
+                    
+                    if semantic_results:
+                        print(f"✅ Semantic search found {len(semantic_results)} results")
+                        results_df = pd.DataFrame(semantic_results)
+                        budget_status = "within_budget" if budget_range else "no_budget_specified"
+                        return results_df, budget_status
+                    else:
+                        print("⚠️ Semantic search found no results, falling back to keyword search")
+            else:
+                print("⚠️ semantic_search method not available, falling back to keyword search")
+            
+        except Exception as e:
+            print(f"❌ Semantic search failed: {str(e)}")
+            logging.error(f"Semantic search error: {str(e)}")
+    
+    # Fallback to your existing keyword-based search
+    print("🔄 Using existing keyword-based search as fallback")
+    try:
+        fallback_results = await fetch_products_with_budget_awareness(
+            db, top_keywords, max_results, gender_category, budget_range
+        )
+        
+        print(f"✅ Fallback search completed")
+        return fallback_results
+        
+    except Exception as e:
+        print(f"❌ Fallback search also failed: {str(e)}")
+        logging.error(f"Fallback search error: {str(e)}")
+        return pd.DataFrame(), "error"
+    
+def rebalance_keywords_for_current_request(user_context, current_user_input):
+    """
+    CRITICAL FIX: Rebalance keywords so current request gets priority
+    """
+    print(f"\n⚖️ REBALANCING KEYWORDS FOR CURRENT REQUEST")
+    print("="*60)
+    print(f"📝 Current input: '{current_user_input}'")
+    
+    if "accumulated_keywords" not in user_context or not current_user_input:
+        return
+    
+    # Define keyword categories with importance levels
+    keyword_categories = {
+        'current_clothing_request': {
+            'terms': [],  # Will be filled dynamically
+            'target_weight_range': (200000, 500000),  # MUCH HIGHER target weight for current request
+            'priority': 1  # Highest priority
+        },
+        'clothing_items': {
+            'terms': ['kemeja', 'shirt', 'blouse', 'celana', 'pants', 'rok', 'skirt', 'dress', 'gaun', 'atasan', 'kaos'],
+            'target_weight_range': (5000, 20000),  # Medium weight for other clothing
+            'priority': 2
+        },
+        'style_attributes': {
+            'terms': ['casual', 'formal', 'elegant', 'vintage', 'modern', 'minimalist', 'santai'],
+            'target_weight_range': (1000, 5000),  # Lower weight for styles
+            'priority': 3
+        },
+        'colors': {
+            'terms': ['black', 'white', 'red', 'blue', 'hitam', 'putih', 'merah', 'biru'],
+            'target_weight_range': (500, 2000),  # Even lower for colors
+            'priority': 4
+        },
+        'user_attributes': {
+            'terms': ['female', 'male', 'woman', 'man', 'perempuan', 'cewe', 'indonesia'],
+            'target_weight_range': (100, 1000),  # Low weight for user attributes
+            'priority': 5
+        },
+        'context_terms': {
+            'terms': ['carikan', 'tone', 'baju', 'tinggi', 'cm', 'kg'],
+            'target_weight_range': (50, 500),  # Lowest weight for context
+            'priority': 6
+        }
+    }
+    
+    # Extract current clothing request terms from user input
+    user_input_lower = current_user_input.lower()
+    current_clothing_terms = []
+    
+    # Check for clothing items in current input
+    all_clothing_terms = [
+        'kemeja', 'shirt', 'blouse', 'celana', 'pants', 'rok', 'skirt', 'dress', 'gaun', 
+        'atasan', 'kaos', 't-shirt', 'jaket', 'jacket', 'sweater', 'bawahan'
+    ]
+    
+    for term in all_clothing_terms:
+        if term in user_input_lower:
+            current_clothing_terms.append(term)
+    
+    # Update current request category
+    keyword_categories['current_clothing_request']['terms'] = current_clothing_terms
+    
+    print(f"🎯 Current clothing request terms: {current_clothing_terms}")
+    
+    # Categorize and rebalance keywords
+    rebalanced_count = 0
+    max_weights_by_category = {}
+    
+    # First pass: find current max weights per category
+    for keyword, data in user_context["accumulated_keywords"].items():
+        keyword_lower = keyword.lower()
+        current_weight = get_weight_compatible(data)
+        
+        # Find which category this keyword belongs to
+        category_found = None
+        for category_name, category_info in keyword_categories.items():
+            if any(term in keyword_lower for term in category_info['terms']):
+                category_found = category_name
+                break
+        
+        if category_found:
+            if category_found not in max_weights_by_category:
+                max_weights_by_category[category_found] = current_weight
+            else:
+                max_weights_by_category[category_found] = max(max_weights_by_category[category_found], current_weight)
+    
+    print(f"📊 Current max weights by category: {max_weights_by_category}")
+    
+    # Second pass: rebalance weights
+    for keyword, data in user_context["accumulated_keywords"].items():
+        keyword_lower = keyword.lower()
+        current_weight = get_weight_compatible(data)
+        
+        # Find which category this keyword belongs to
+        category_found = None
+        for category_name, category_info in keyword_categories.items():
+            if any(term in keyword_lower for term in category_info['terms']):
+                category_found = category_name
+                break
+        
+        if not category_found:
+            category_found = 'context_terms'  # Default category
+        
+        category_info = keyword_categories[category_found]
+        target_min, target_max = category_info['target_weight_range']
+        
+        # Calculate new weight
+        new_weight = current_weight
+        
+        # If weight is way too high for this category, bring it down
+        if current_weight > target_max * 2:
+            new_weight = target_max
+            print(f"   📉 CAPPING '{keyword}': {current_weight:.1f} → {new_weight:.1f} ({category_found})")
+            rebalanced_count += 1
+        
+        # If this is a current clothing request and weight is too low, boost it
+        elif category_found == 'current_clothing_request' and current_weight < target_min:
+            new_weight = max(target_max, current_weight * 3.0)  # AGGRESSIVE boost
+            print(f"   📈 AGGRESSIVELY BOOSTING '{keyword}': {current_weight:.1f} → {new_weight:.1f} (CURRENT REQUEST)")
+            rebalanced_count += 1
+        
+        # If weight is significantly out of range, adjust it
+        elif current_weight > target_max * 5:  # Way too high
+            new_weight = target_max * 2  # Bring down but not too aggressively
+            print(f"   📉 REDUCING '{keyword}': {current_weight:.1f} → {new_weight:.1f} ({category_found})")
+            rebalanced_count += 1
+        
+        elif current_weight < target_min / 5 and category_found in ['clothing_items', 'current_clothing_request']:  # Too low for important items
+            new_weight = target_min
+            print(f"   📈 RAISING '{keyword}': {current_weight:.1f} → {new_weight:.1f} ({category_found})")
+            rebalanced_count += 1
+        
+        # Update the weight
+        if isinstance(data, dict):
+            data["weight"] = new_weight
+        else:
+            user_context["accumulated_keywords"][keyword] = {
+                "weight": new_weight,
+                "total_frequency": 1,
+                "mention_count": 1,
+                "count": 1,
+                "first_seen": datetime.now().isoformat(),
+                "last_seen": datetime.now().isoformat(),
+                "source": "rebalanced",
+                "category": category_found
+            }
+    
+    print(f"⚖️ Rebalanced {rebalanced_count} keywords")
+    
+    # Show top keywords after rebalancing
+    if user_context["accumulated_keywords"]:
+        sorted_kw = sorted(user_context["accumulated_keywords"].items(), 
+                          key=lambda x: get_weight_compatible(x[1]), reverse=True)
+        print(f"\n🏆 TOP 10 AFTER REBALANCING:")
+        for i, (kw, data) in enumerate(sorted_kw[:10]):
+            weight = get_weight_compatible(data)
+            source_icon = "👤" if get_source_compatible(data) == "user_input" else "🤖"
+            print(f"      {i+1}. {source_icon} '{kw}' → {weight:.1f}")
+    
+    print("="*60)
+
+def apply_current_request_boost(user_context, current_user_input):
+    """
+    IMPROVED: More targeted boost for current request terms
+    """
+    if not current_user_input or "accumulated_keywords" not in user_context:
+        return
+    
+    print(f"\n🚀 IMPROVED CURRENT REQUEST BOOST")
+    print("="*50)
+    
+    user_input_lower = current_user_input.lower()
+    input_words = set(user_input_lower.split())
+    
+    # Identify key terms in current request
+    key_terms = []
+    specificity_terms = ['maxi', 'mini', 'midi', 'cropped', 'oversized', 'only', 'just', 'saja']
+    clothing_terms = ['skirt', 'rok', 'dress', 'gaun', 'pants', 'celana', 'kemeja', 'shirt']
+    
+    for word in input_words:
+        if word in specificity_terms or word in clothing_terms:
+            key_terms.append(word)
+    
+    print(f"📝 Key terms in current request: {key_terms}")
+    
+    boosted_count = 0
+    for keyword, data in user_context["accumulated_keywords"].items():
+        keyword_lower = keyword.lower()
+        
+        # Check if keyword is relevant to current request
+        relevance_score = 0
+        
+        # Exact match with key terms
+        if any(term in keyword_lower for term in key_terms):
+            relevance_score = 3.0
+        # Partial match with input words
+        elif any(word in keyword_lower for word in input_words if len(word) > 2):
+            relevance_score = 1.5
+        
+        if relevance_score > 0:
+            current_weight = get_weight_compatible(data)
+            
+            # Determine boost factor
+            if any(spec in keyword_lower for spec in specificity_terms):
+                boost_factor = 10.0  # HUGE boost for specificity
+            elif any(clothing in keyword_lower for clothing in clothing_terms):
+                boost_factor = 5.0   # Large boost for clothing
+            else:
+                boost_factor = relevance_score
+            
+            new_weight = current_weight * boost_factor
+            
+            # Update weight
+            if isinstance(data, dict):
+                data["weight"] = new_weight
+                data["last_seen"] = datetime.now().isoformat()
+            
+            print(f"   🚀 BOOSTED '{keyword}': {current_weight:.1f} → {new_weight:.1f} (×{boost_factor})")
+            boosted_count += 1
+    
+    print(f"🚀 Applied improved boost to {boosted_count} relevant keywords")
+    print("="*50)
+
+def cap_extreme_weights(user_context, max_weight_cap=100000):
+    """
+    Cap extremely high weights that dominate everything else
+    """
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    print(f"\n🧢 APPLYING WEIGHT CAP (max: {max_weight_cap:,})")
+    print("="*50)
+    
+    capped_count = 0
+    
+    for keyword, data in user_context["accumulated_keywords"].items():
+        current_weight = get_weight_compatible(data)
+        
+        if current_weight > max_weight_cap:
+            if isinstance(data, dict):
+                data["weight"] = max_weight_cap
+            
+            print(f"   🧢 CAPPED '{keyword}': {current_weight:.1f} → {max_weight_cap}")
+            capped_count += 1
+    
+    print(f"🧢 Capped {capped_count} extreme weights")
+    print("="*50)
+
+async def enhanced_product_search_with_rebalancing(websocket, user_context, session_id, db, user_language, semantic_enabled):
+    """
+    Enhanced product search that rebalances keywords first
+    """
+    print(f"\n🎯 ENHANCED PRODUCT SEARCH WITH REBALANCING")
+    print("="*60)
+    
+    try:
+        # STEP 1: Cap extreme weights first
+        cap_extreme_weights(user_context, max_weight_cap=50000)
+        
+        # STEP 2: Rebalance keywords for current request
+        current_user_input = user_context.get("current_text_input", "")
+        if current_user_input:
+            rebalance_keywords_for_current_request(user_context, current_user_input)
+            apply_current_request_boost(user_context, current_user_input)
+        
+        # STEP 3: Get keywords safely
+        accumulated_keywords = []
+        if "accumulated_keywords" in user_context:
+            accumulated_keywords = [(k, get_weight_compatible(v)) 
+                                  for k, v in user_context["accumulated_keywords"].items()]
+        
+        # STEP 4: Sort by weight (after rebalancing)
+        accumulated_keywords.sort(key=lambda x: x[1], reverse=True)
+        
+        print(f"\n📊 FINAL KEYWORD RANKING FOR SEARCH:")
+        for i, (kw, weight) in enumerate(accumulated_keywords[:15]):
+            print(f"   {i+1:2d}. '{kw}' → {weight:.1f}")
+        
+        # STEP 5: Enhanced keyword extraction with FILTERING
+        last_user_input = user_context.get("current_text_input", "")
+        last_ai_response = user_context.get("last_ai_response", "")
+
+        if semantic_enabled:
+            ranked_keywords = enhanced_extract_ranked_keywords(
+                ai_response=last_ai_response,
+                translated_input=last_user_input,
+                accumulated_keywords=accumulated_keywords,
+                use_semantic=True
+            )
+        else:
+            ranked_keywords = extract_ranked_keywords(
+                last_ai_response, last_user_input, accumulated_keywords
+            )
+
+        # CRITICAL FIX: Filter out conflicting clothing categories from semantic query
+        if current_user_input:
+            ranked_keywords = filter_conflicting_categories_from_query(ranked_keywords, current_user_input)
+        
+        # STEP 6: Prioritize current clothing request in final ranking
+        final_keywords = prioritize_current_clothing_request(ranked_keywords, current_user_input)
+        
+        print(f"\n🎯 FINAL SEARCH KEYWORDS:")
+        for i, (kw, weight) in enumerate(final_keywords[:15]):
+            print(f"   {i+1:2d}. '{kw}' → {weight:.1f}")
+
+        # STEP 7: Create CLEAN semantic query - FIXED VERSION
+        if user_context["semantic_enabled"]:
+            current_input = user_context.get("current_text_input", "")
+            
+            if current_input:
+                # Extract ONLY the main clothing item from current input
+                main_clothing_item = extract_main_clothing_item(current_input)
+                
+                if main_clothing_item:
+                    # Use ONLY the main item for semantic search
+                    semantic_query = main_clothing_item
+                    print(f"🎯 CLEAN SEMANTIC QUERY: '{semantic_query}'")
+                else:
+                    # Fallback: use top 3 keywords only
+                    top_terms = [kw for kw, _ in final_keywords[:3]]
+                    semantic_query = " ".join(top_terms)
+                    print(f"📝 FALLBACK QUERY: '{semantic_query}'")
+            else:
+                # No current input, use top 3 accumulated keywords
+                top_terms = [kw for kw, _ in final_keywords[:3]]
+                semantic_query = " ".join(top_terms)
+                print(f"📚 ACCUMULATED QUERY: '{semantic_query}'")
+        else:
+            # Non-semantic: still use clean approach
+            if current_input:
+                main_item = extract_main_clothing_item(current_input)
+                if main_item:
+                    # Find keywords that match the main item
+                    relevant_keywords = [kw for kw, _ in final_keywords[:5] 
+                                    if main_item.lower() in kw.lower()]
+                    semantic_query = " ".join([main_item] + relevant_keywords)
+                else:
+                    semantic_query = " ".join([kw for kw, _ in final_keywords[:5]])
+            else:
+                semantic_query = " ".join([kw for kw, _ in final_keywords[:5]])
+
+        # STEP 8: Translate keywords if needed
+        if user_language != "en":
+            translated_keywords = []
+            for kw, score in final_keywords:
+                try:
+                    translated_kw = translate_text(kw, "en", session_id)
+                    translated_keywords.append((translated_kw, score))
+                except:
+                    translated_keywords.append((kw, score))
+        else:
+            translated_keywords = final_keywords
+
+        # STEP 9: Get user context
+        user_gender = user_context.get("user_gender", {}).get("category", None)
+        budget_range = user_context.get("budget_range", None)
+        
+        # STEP 10: Search with rebalanced keywords
+        if semantic_enabled:
+            recommended_products, budget_status = await enhanced_fetch_products_with_semantic(
+                db=db,
+                top_keywords=translated_keywords,
+                max_results=15,
+                gender_category=user_gender,
+                budget_range=budget_range,
+                use_semantic=True
+            )
+        else:
+            recommended_products, budget_status = await fetch_products_with_budget_awareness(
+                db=db,
+                top_keywords=translated_keywords,
+                max_results=15,
+                gender_category=user_gender,
+                budget_range=budget_range
+            )
+        
+        print(f"✅ Search completed: {len(recommended_products)} products found")
+        print("="*60)
+        
+        return recommended_products, budget_status
+        
+    except Exception as e:
+        logging.error(f"Error in enhanced_product_search_with_rebalancing: {str(e)}")
+        raise
+
+def extract_main_clothing_item(user_input):
+    """
+    Extract the PRIMARY clothing item the user is asking for
+    """
+    if not user_input:
+        return None
+    
+    user_input_lower = user_input.lower()
+    
+    # Define clothing items in priority order (most specific first)
+    clothing_items = [
+        # Specific blazer types
+        'cropped blazer', 'oversized blazer', 'fitted blazer', 'long blazer',
+        # General blazer
+        'blazer', 'jas',
+        # Specific shirt types  
+        'long sleeve shirt', 'short sleeve shirt', 'button up shirt', 'dress shirt',
+        'kemeja lengan panjang', 'kemeja lengan pendek',
+        # General shirts
+        'kemeja', 'shirt', 'blouse', 'blus',
+        # Specific pants
+        'wide leg pants', 'skinny pants', 'high waist pants', 'palazzo pants',
+        # General pants
+        'celana', 'pants', 'trousers',
+        # Specific skirts
+        'maxi skirt', 'mini skirt', 'a-line skirt', 'pencil skirt',
+        'rok maxi', 'rok mini', 'rok panjang', 'rok pendek',
+        # General skirts
+        'rok', 'skirt',
+        # Dresses
+        'maxi dress', 'mini dress', 'midi dress', 'dress', 'gaun',
+        # Other items
+        'sweater', 'cardigan', 'hoodie', 'jacket', 'jaket',
+        'atasan', 'kaos', 't-shirt'
+    ]
+    
+    # Find the FIRST (most specific) match
+    for item in clothing_items:
+        if item in user_input_lower:
+            print(f"   🎯 MAIN ITEM DETECTED: '{item}'")
+            return item
+    
+    print(f"   ⚠️ NO MAIN ITEM FOUND in: '{user_input}'")
+    return None
+
+def analyze_query_complexity(user_input, accumulated_keywords):
+    """
+    Analyze query to determine complexity and intent
+    """
+    if not user_input:
+        return {'type': 'normal', 'primary_terms': []}
+    
+    user_input_lower = user_input.lower()
+    words = user_input_lower.split()
+    
+    # Extract primary clothing terms from input
+    clothing_terms = [
+        'kemeja', 'shirt', 'blouse', 'blus', 'dress', 'gaun', 'celana', 'pants', 
+        'rok', 'skirt', 'jaket', 'jacket', 'sweater', 'atasan', 'kaos', 'sepatu'
+    ]
+    
+    primary_terms = []
+    for word in words:
+        if any(clothing in word for clothing in clothing_terms):
+            primary_terms.append(word)
+    
+    # Analyze intent indicators
+    very_specific_indicators = ['saja', 'only', 'just', 'hanya', 'cuma']
+    specific_indicators = ['tunjukkan', 'carikan', 'show me', 'want', 'mau']
+    broad_indicators = ['also', 'juga', 'or', 'atau', 'options', 'pilihan', 'suggestions']
+    
+    if any(indicator in user_input_lower for indicator in very_specific_indicators):
+        query_type = 'very_specific'
+    elif any(indicator in user_input_lower for indicator in specific_indicators):
+        query_type = 'specific'
+    elif any(indicator in user_input_lower for indicator in broad_indicators):
+        query_type = 'broad'
+    elif len(primary_terms) >= 2:  # Multiple clothing items mentioned
+        query_type = 'specific'
+    elif len(words) >= 6:  # Long query suggests broad exploration
+        query_type = 'broad'
+    else:
+        query_type = 'normal'
+    
+    return {
+        'type': query_type,
+        'primary_terms': primary_terms,
+        'word_count': len(words),
+        'clothing_terms_count': len(primary_terms)
+    }
+
+def filter_conflicting_categories_from_query(ranked_keywords, current_user_input):
+    """
+    FLEXIBLE: Dynamic conflict filtering based on user intent intensity
+    """
+    print(f"\n🔍 FLEXIBLE CONFLICT FILTERING")
+    print("="*60)
+    print(f"📝 Current input: '{current_user_input}'")
+    
+    user_input_lower = current_user_input.lower()
+    
+    # Analyze user intent intensity
+    intent_indicators = {
+        'very_specific': ['saja', 'only', 'just', 'hanya', 'cuma'],
+        'specific': ['show me', 'tunjukkan', 'carikan', 'want', 'mau', 'need', 'butuh'],
+        'change_focus': ['now', 'sekarang', 'instead', 'ganti', 'different', 'lain'],
+        'broad_exploration': ['also', 'juga', 'or', 'atau', 'maybe', 'mungkin']
+    }
+    
+    # Determine intent level
+    intent_level = 'normal'
+    for level, indicators in intent_indicators.items():
+        if any(indicator in user_input_lower for indicator in indicators):
+            intent_level = level
+            break
+    
+    print(f"   🎯 Intent level: {intent_level}")
+    
+    # Define clothing categories dynamically
+    clothing_categories = {
+        'tops': ['kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 'sweater', 'hoodie'],
+        'bottoms': ['celana', 'pants', 'rok', 'skirt', 'bawahan', 'jeans', 'shorts'],
+        'dresses': ['dress', 'gaun', 'terusan'],
+        'outerwear': ['jaket', 'jacket', 'coat', 'blazer'],
+        'footwear': ['sepatu', 'shoes', 'sneaker', 'heels', 'boots'],
+        'accessories': ['tas', 'bag', 'topi', 'hat', 'scarf']
+    }
+    
+    # Find current categories mentioned
+    current_categories = set()
+    mentioned_terms = []
+    
+    for category_name, terms in clothing_categories.items():
+        found_terms = [term for term in terms if term in user_input_lower]
+        if found_terms:
+            current_categories.add(category_name)
+            mentioned_terms.extend(found_terms)
+    
+    print(f"   📝 Current categories: {current_categories}")
+    print(f"   🔤 Mentioned terms: {mentioned_terms}")
+    
+    # Apply filtering based on intent level
+    if intent_level == 'very_specific':
+        # Very strict filtering - keep only exact matches
+        filter_strength = 0.9
+        keep_related = False
+    elif intent_level == 'specific':
+        # Moderate filtering - keep main category + styles
+        filter_strength = 0.7
+        keep_related = True
+    elif intent_level == 'change_focus':
+        # Strong filtering for category changes
+        filter_strength = 0.8
+        keep_related = True
+    elif intent_level == 'broad_exploration':
+        # Light filtering - keep most things
+        filter_strength = 0.3
+        keep_related = True
+    else:
+        # Normal filtering
+        filter_strength = 0.5
+        keep_related = True
+    
+    # Dynamic keyword filtering
+    filtered_keywords = []
+    
+    for keyword, weight in ranked_keywords:
+        keyword_lower = keyword.lower()
+        should_keep = True
+        keep_reason = "default"
+        weight_multiplier = 1.0
+        
+        # Check if keyword matches current categories
+        matches_current = False
+        for category in current_categories:
+            if any(term in keyword_lower for term in clothing_categories[category]):
+                matches_current = True
+                keep_reason = f"matches_{category}"
+                weight_multiplier = 2.0  # Boost matching categories
+                break
+        
+        # Check if keyword matches mentioned terms specifically
+        matches_mentioned = any(term in keyword_lower for term in mentioned_terms)
+        if matches_mentioned:
+            weight_multiplier = max(weight_multiplier, 3.0)  # Extra boost for exact terms
+            keep_reason = "exact_match"
+        
+        # Check for conflicting categories
+        conflicts_with_current = False
+        if current_categories and not matches_current:
+            for category_name, terms in clothing_categories.items():
+                if category_name not in current_categories:
+                    if any(term in keyword_lower for term in terms):
+                        conflicts_with_current = True
+                        break
+        
+        # Apply filtering logic based on intent
+        if matches_current or matches_mentioned:
+            # Always keep matching keywords
+            should_keep = True
+        elif conflicts_with_current:
+            # Apply filter strength to conflicting items
+            if intent_level == 'very_specific':
+                should_keep = False  # Remove all conflicts
+            elif intent_level in ['specific', 'change_focus']:
+                should_keep = weight > (100 * filter_strength)  # Keep only high-weight conflicts
+                if should_keep:
+                    weight_multiplier = 0.3  # But reduce their weight significantly
+            else:
+                should_keep = True
+                weight_multiplier = 0.6  # Mild reduction for conflicts
+        else:
+            # Non-conflicting, non-matching keywords (styles, colors, etc.)
+            if keep_related:
+                # Keep style attributes, colors, etc.
+                style_terms = ['casual', 'formal', 'elegant', 'vintage', 'modern', 'minimalist']
+                color_terms = ['black', 'white', 'red', 'blue', 'hitam', 'putih']
+                
+                if any(style in keyword_lower for style in style_terms + color_terms):
+                    should_keep = True
+                    weight_multiplier = 0.5  # Reduce but keep
+                    keep_reason = "style_attribute"
+                else:
+                    should_keep = weight > (50 * filter_strength)
+                    weight_multiplier = 0.4
+            else:
+                should_keep = weight > (80 * filter_strength)
+                weight_multiplier = 0.2
+        
+        if should_keep:
+            final_weight = weight * weight_multiplier
+            filtered_keywords.append((keyword, final_weight))
+            
+            if weight_multiplier > 1.5:
+                print(f"   🚀 BOOSTED '{keyword}': {weight:.1f} → {final_weight:.1f} ({keep_reason})")
+            elif weight_multiplier < 0.7:
+                print(f"   📉 REDUCED '{keyword}': {weight:.1f} → {final_weight:.1f} ({keep_reason})")
+            else:
+                print(f"   ✅ KEPT '{keyword}': {final_weight:.1f} ({keep_reason})")
+        else:
+            print(f"   ❌ FILTERED '{keyword}' (conflicts, intent: {intent_level})")
+    
+    print(f"   📊 FLEXIBLE FILTERING: {len(ranked_keywords)} → {len(filtered_keywords)}")
+    print("="*60)
+    
+    return filtered_keywords
+
+def prioritize_current_clothing_request(ranked_keywords, current_user_input):
+    """
+    FLEXIBLE: Dynamic prioritization based on query analysis
+    """
+    if not current_user_input:
+        return ranked_keywords
+    
+    query_analysis = analyze_query_complexity(current_user_input, ranked_keywords)
+    user_input_lower = current_user_input.lower()
+    
+    # Dynamic boost factors based on query type
+    boost_factors = {
+        'very_specific': {'exact': 10.0, 'related': 1.0, 'other': 0.2},
+        'specific': {'exact': 5.0, 'related': 2.0, 'other': 0.5},
+        'broad': {'exact': 3.0, 'related': 1.5, 'other': 0.8},
+        'normal': {'exact': 2.0, 'related': 1.2, 'other': 1.0}
+    }
+    
+    factors = boost_factors.get(query_analysis['type'], boost_factors['normal'])
+    
+    prioritized_keywords = []
+    
+    for keyword, weight in ranked_keywords:
+        keyword_lower = keyword.lower()
+        
+        # Check relationship to current input
+        if any(term in keyword_lower for term in query_analysis['primary_terms']):
+            # Exact match with mentioned terms
+            new_weight = weight * factors['exact']
+            priority_type = "EXACT"
+        elif any(word in keyword_lower for word in user_input_lower.split() if len(word) > 2):
+            # Related to input words
+            new_weight = weight * factors['related']
+            priority_type = "RELATED"
+        else:
+            # Other keywords
+            new_weight = weight * factors['other']
+            priority_type = "OTHER"
+        
+        prioritized_keywords.append((keyword, new_weight))
+        
+        if new_weight != weight:
+            print(f"   {priority_type} '{keyword}': {weight:.1f} → {new_weight:.1f}")
+    
+    return sorted(prioritized_keywords, key=lambda x: x[1], reverse=True)
+
 def generate_budget_message(budget_range, user_language, cheapest_price=None, most_expensive_price=None):
     """
     Generate appropriate budget constraint messages.
@@ -1835,103 +3271,133 @@ def smart_preserve_keywords(user_context, change_intensity):
 
 def smart_keyword_context_update(user_input, user_context, new_keywords, is_user_input=False):
     """
-    ENHANCED: Updated context management that works with the new cleanup system.
+    IMPROVED VERSION: Better handling of specificity changes and keyword pollution
     """
-    print(f"\n📝 SMART ENHANCED KEYWORD UPDATE")
-    print("="*50)
+    print(f"\n📝 IMPROVED SMART KEYWORD UPDATE")
+    print("="*70)
     
-    # Debug: Show state before update
-    if "accumulated_keywords" in user_context:
-        acc_kw = user_context["accumulated_keywords"]
-        print(f"📚 BEFORE - {len(acc_kw)} accumulated keywords")
-        if acc_kw:
-            sorted_kw = sorted(acc_kw.items(), key=lambda x: x[1].get("weight", 0), reverse=True)
-            print(f"   🏆 Top 5 BEFORE:")
-            for i, (kw, data) in enumerate(sorted_kw[:5]):
-                source_icon = "👤" if data.get("source") == "user_input" else "🤖"
-                category = data.get("category", "unknown")
-                print(f"      {i+1}. {source_icon} '{kw}' → {data.get('weight', 0):.1f} ({category})")
+    # STEP 0: Handle gender detection FIRST (NEW)
+    if is_user_input and user_input:
+        detected_gender = handle_gender_in_keyword_update(user_input, user_context)
+        if detected_gender:
+            print(f"👤 Gender confirmed: {detected_gender}")
     
-    # Get current accumulated keywords for change detection
-    current_accumulated = []
-    if "accumulated_keywords" in user_context:
-        current_accumulated = [(k, v["weight"]) for k, v in user_context["accumulated_keywords"].items()]
+    # STEP 1: Check for specificity changes FIRST (before any updates)
+    if is_user_input and user_input:
+        specificity_change, reset_reason, specificity_found, conflicting = detect_specificity_change(
+            user_input, user_context
+        )
+        
+        if specificity_change:
+            print(f"🎯 SPECIFICITY CHANGE DETECTED - Executing focused reset")
+            execute_specificity_reset(user_context, reset_reason, specificity_found, conflicting)
     
-    # Use the compatible change detection function
-    category_changed = detect_fashion_category_change(user_input, user_context)
-    occasion_changed = detect_occasion_change(user_input, current_accumulated)
+    # STEP 2: Check for major category changes (your existing logic)
+    if is_user_input and user_input:
+        category_changed = detect_and_handle_category_change_improved(user_input, user_context)
+        if category_changed:
+            print(f"🔄 MAJOR CATEGORY CHANGE - Already handled")
     
-    # Apply enhanced keyword decay
+    # STEP 3: Apply keyword decay before adding new keywords
     apply_keyword_decay(user_context)
     
-    # Handle different types of changes
-    if category_changed:
-        print("🔄 MAJOR FASHION CATEGORY CHANGE - Smart selective reset")
-        
-        # Enhanced preservation that maintains change detection capability
-        preserved_keywords = smart_preserve_keywords(user_context, change_intensity=3)
-        user_context["accumulated_keywords"] = preserved_keywords
-        
-        # Clear product cache
-        user_context["product_cache"] = {
-            "all_results": pd.DataFrame(),
-            "current_page": 0,
-            "products_per_page": 5,
-            "has_more": False
-        }
-        
-    elif occasion_changed:
-        print("🎪 OCCASION CHANGE - Reducing occasion keyword weights")
-        
-        # Reduce weights of occasion-related keywords
-        occasion_terms = ['office', 'kantor', 'party', 'pesta', 'wedding', 'beach', 'formal', 'casual']
-        
-        for keyword, data in user_context.get("accumulated_keywords", {}).items():
-            if any(term in keyword.lower() for term in occasion_terms):
-                old_weight = data["weight"]
-                data["weight"] *= 0.4  # Significant reduction for old occasions
-                print(f"   📉 Reduced '{keyword}' weight: {old_weight:.1f} → {data['weight']:.1f}")
+    # STEP 4: Add new keywords with smart weighting
+    update_accumulated_keywords(new_keywords, user_context, user_input, is_user_input)
     
-    # Apply category-based scoring to new keywords
-    enhanced_new_keywords = []
-    for keyword, weight in new_keywords:
-        category_multiplier = get_keyword_category_multiplier(keyword)
-        enhanced_weight = weight * category_multiplier
-        enhanced_new_keywords.append((keyword, enhanced_weight))
-        
-        if enhanced_weight != weight:
-            print(f"   ⚖️  '{keyword}': {weight:.1f} × {category_multiplier} = {enhanced_weight:.1f}")
+    # STEP 5: Apply current request boost
+    if is_user_input and user_input:
+        apply_current_request_boost(user_context, user_input)
     
-    # Add new keywords with enhanced weights
-    update_accumulated_keywords(enhanced_new_keywords, user_context, is_user_input=is_user_input)
+    # STEP 6: Final cleanup with specificity awareness
+    apply_specificity_aware_cleanup(user_context)
     
-    # Post-update cleanup that preserves change detection keywords
-    persistence_config = {
-        'clothing_items': {'decay_rate': 0.1, 'max_age_minutes': 120},
-        'style_attributes': {'decay_rate': 0.15, 'max_age_minutes': 90},
-        'colors': {'decay_rate': 0.2, 'max_age_minutes': 60},
-        'gender_terms': {'decay_rate': 0.05, 'max_age_minutes': 240},
-        'occasions': {'decay_rate': 0.4, 'max_age_minutes': 30},
-        'default': {'decay_rate': 0.25, 'max_age_minutes': 45}
+    print(f"📊 IMPROVED UPDATE COMPLETE")
+    print("="*70)
+
+def apply_specificity_aware_cleanup(user_context):
+    """
+    Cleanup that's aware of specificity and reduces pollution from irrelevant terms
+    """
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    print(f"\n🧹 SPECIFICITY-AWARE CLEANUP")
+    print("="*40)
+    
+    # Find the highest weight keywords to understand current focus
+    sorted_keywords = sorted(
+        user_context["accumulated_keywords"].items(),
+        key=lambda x: get_weight_compatible(x[1]),
+        reverse=True
+    )
+    
+    if not sorted_keywords:
+        return
+    
+    # Identify current focus from top keywords
+    top_5_keywords = [kw for kw, _ in sorted_keywords[:5]]
+    current_focus = set()
+    
+    focus_categories = {
+        'skirts': ['rok', 'skirt', 'maxi', 'mini', 'midi'],
+        'dresses': ['dress', 'gaun'],
+        'tops': ['kemeja', 'shirt', 'blouse', 'atasan'],
+        'pants': ['celana', 'pants', 'jeans']
     }
     
-    category_cleanup(user_context, persistence_config)
+    for category, terms in focus_categories.items():
+        if any(any(term in kw.lower() for term in terms) for kw in top_5_keywords):
+            current_focus.add(category)
     
-    # Debug: Show final state
-    final_count = len(user_context.get("accumulated_keywords", {}))
-    print(f"\n📊 AFTER ENHANCED UPDATE:")
-    print(f"   📈 Total keywords: {final_count}")
+    print(f"   🎯 Current focus detected: {current_focus}")
     
-    if final_count > 0:
-        sorted_final = sorted(user_context["accumulated_keywords"].items(), 
-                             key=lambda x: x[1].get("weight", 0), reverse=True)
-        print(f"   🏆 Top 5 AFTER:")
-        for i, (kw, data) in enumerate(sorted_final[:5]):
-            source_icon = "👤" if data.get("source") == "user_input" else "🤖"
-            category = data.get("category", "unknown")
-            print(f"      {i+1}. {source_icon} '{kw}' → {data.get('weight', 0):.1f} ({category})")
+    # Remove or reduce keywords that conflict with current focus
+    keywords_to_adjust = {}
     
-    print("="*50)
+    for keyword, data in user_context["accumulated_keywords"].items():
+        keyword_lower = keyword.lower()
+        current_weight = get_weight_compatible(data)
+        
+        # Check if keyword conflicts with current focus
+        belongs_to_focus = False
+        belongs_to_other = False
+        
+        for focus_cat in current_focus:
+            if focus_cat in focus_categories:
+                if any(term in keyword_lower for term in focus_categories[focus_cat]):
+                    belongs_to_focus = True
+                    break
+        
+        if not belongs_to_focus:
+            for other_cat, terms in focus_categories.items():
+                if other_cat not in current_focus:
+                    if any(term in keyword_lower for term in terms):
+                        belongs_to_other = True
+                        break
+        
+        # Reduce weight of conflicting keywords
+        if belongs_to_other and current_weight > 1000:
+            new_weight = current_weight * 0.1  # 90% reduction
+            keywords_to_adjust[keyword] = new_weight
+            print(f"   📉 REDUCING conflicting: '{keyword}' {current_weight:.1f} → {new_weight:.1f}")
+    
+    # Apply adjustments
+    for keyword, new_weight in keywords_to_adjust.items():
+        if isinstance(user_context["accumulated_keywords"][keyword], dict):
+            user_context["accumulated_keywords"][keyword]["weight"] = new_weight
+    
+    # Keep only top 25 keywords after cleanup
+    if len(user_context["accumulated_keywords"]) > 25:
+        sorted_after_cleanup = sorted(
+            user_context["accumulated_keywords"].items(),
+            key=lambda x: get_weight_compatible(x[1]),
+            reverse=True
+        )
+        user_context["accumulated_keywords"] = dict(sorted_after_cleanup[:25])
+        print(f"   🗑️ Kept top 25 keywords after cleanup")
+    
+    print(f"🧹 Specificity-aware cleanup completed")
+    print("="*40)
 
 def extract_ranked_keywords(ai_response: str = None, translated_input: str = None, accumulated_keywords=None):
     """
@@ -2036,11 +3502,17 @@ def extract_ranked_keywords(ai_response: str = None, translated_input: str = Non
         
         # Score user keywords with category-aware scoring
         for keyword, frequency in user_keywords.items():
+            # MASSIVELY increased base score for current user input
             score, priority = get_keyword_score(keyword, 'user', frequency)
+            
+            # ADDITIONAL BOOST for current input
+            if priority == 'HIGHEST':  # Clothing items
+                score *= 10.0  # 10x boost instead of previous multipliers
+            elif priority == 'HIGH':   # Style attributes  
+                score *= 5.0   # 5x boost
+            
             keyword_scores[keyword] = score
-            
-            print(f"   📌 '{keyword}' (freq: {frequency}) → {score} ({priority})")
-            
+            print(f"   📌 CURRENT INPUT '{keyword}' → {score} ({priority})")    
             # Get translation expansion and exclusions
             try:
                 search_terms = get_search_terms_for_keyword(keyword)
@@ -2337,6 +3809,54 @@ def detect_rapid_preference_changes(user_input, user_context):
 @app.get("/", response_class=HTMLResponse)
 async def chat_page(request: Request):
     return templates.TemplateResponse("home.html", {"request": request})
+
+@app.on_event("startup")
+async def startup_event():
+    """Enhanced startup with smart embedding initialization"""
+    print("🚀 Starting Enhanced Fashion Chatbot...")
+    
+    # Create upload directory
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    
+    # Connect to database
+    await database.connect()
+    await create_tables()
+    
+    # Initialize NLP
+    global nlp
+    try:
+        nlp = spacy.load("en_core_web_sm")
+        print("✅ Spacy English model loaded")
+    except OSError:
+        print("⚠️ Spacy English model not found. Install with: python -m spacy download en_core_web_sm")
+        nlp = None
+    
+    # Initialize semantic system (but don't preprocess yet)
+    if semantic_system.model:
+        print("✅ Enhanced semantic understanding ready")
+        print("💡 Embeddings will be created/loaded when first user connects")
+    else:
+        print("⚠️ Using fallback mode - install sentence-transformers for better results")
+    
+    print("🎯 Enhanced Fashion Chatbot is ready!")
+
+embeddings_initialized = False
+
+async def initialize_embeddings_once(db: AsyncSession):
+    """Initialize embeddings only once per app lifetime"""
+    global embeddings_initialized
+    
+    if not embeddings_initialized and semantic_system.model:
+        print(f"🔄 First-time embeddings initialization...")
+        
+        # Get database session
+        try:
+            await enhanced_matcher.preprocess_products(db)
+            embeddings_initialized = True
+            print(f"✅ Embeddings initialized successfully")
+        except Exception as e:
+            print(f"⚠️ Embeddings initialization failed: {e}")
+            print(f"   Continuing with standard keyword search")
 
 app.add_middleware(
     CORSMiddleware,
@@ -2640,44 +4160,250 @@ def extract_intent(user_input, target_language="en", session_id=None):
         "intent": intent
     }
 
+@app.get("/admin/refresh-embeddings")
+async def refresh_embeddings_endpoint(db: AsyncSession = Depends(get_db)):
+    """Admin endpoint to manually refresh embeddings"""
+    try:
+        print("🔄 Manual embeddings refresh requested...")
+        await enhanced_matcher.preprocess_products(db, force_refresh=True)
+        global embeddings_initialized
+        embeddings_initialized = True
+        return {"status": "success", "message": "Embeddings refreshed successfully"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/admin/clear-embeddings-cache")
+async def clear_embeddings_cache_endpoint():
+    """Admin endpoint to clear embeddings cache"""
+    try:
+        enhanced_matcher.clear_cache()
+        global embeddings_initialized
+        embeddings_initialized = False
+        return {"status": "success", "message": "Embeddings cache cleared"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/admin/embeddings-status")
+async def embeddings_status_endpoint():
+    """Check embeddings status"""
+    cache_exists = all(os.path.exists(f) for f in [
+        enhanced_matcher.embeddings_file,
+        enhanced_matcher.products_file, 
+        enhanced_matcher.metadata_file
+    ])
+    
+    metadata = {}
+    if cache_exists:
+        try:
+            with open(enhanced_matcher.metadata_file, 'rb') as f:
+                metadata = pickle.load(f)
+        except:
+            pass
+    
+    return {
+        "embeddings_initialized": embeddings_initialized,
+        "cache_exists": cache_exists,
+        "semantic_available": semantic_system.model is not None,
+        "cache_metadata": metadata
+    }
+
 @app.websocket("/ws")
 async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
     try:
         await websocket.accept()
         session_id = str(uuid.uuid4())
-        await websocket.send_text(f"{session_id}|Selamat Datang! Bagaimana saya bisa membantu Anda hari ini?\n\nWelcome! How can I help you today?")
+        await websocket.send_text(f"{session_id}|🔥 Enhanced Fashion Assistant Ready! 🧠\n\nSelamat Datang! Bagaimana saya bisa membantu Anda hari ini?\n\nWelcome! How can I help you today?")
+        await initialize_embeddings_once(db)
 
-        # Initial system prompt for fashion consultation - only style advice, no products yet
+        # Initialize enhanced system for this session
+        if semantic_system.model:
+            print(f"✅ Session {session_id}: Semantic understanding ENABLED")
+        else:
+            print(f"⚠️ Session {session_id}: Using fallback mode")
+
+        # Your existing message setup with enhanced system prompt
         message_objects = [{
             "role": "system",
             "content": (
-                "You are a fashion consultant. Your task is to provide detailed fashion recommendations "
-                "for users based on their appearance and style preferences. Respond in a friendly, natural tone "
-                "and avoid using structured JSON or code format. Instead, communicate recommendations in conversational sentences.\n\n"
-                "IMPORTANT: Always ask for their gender, weight and height, skin tone, their ethnical background and use this information as a base for your recommendations."
-                "IMPORTANT: When giving recommendations, mention specific clothing items and how they would suit the user's attributes, "
-                "IMPORTANT: such as gender, height, weight, and skin tone. Use descriptive phrases and consider mentioning outfit ideas for casual occasions, "
-                "unless the user specifies a different occasion.\n"
-                "give at least 3 items recommendation.\n\n"
-                "IMPORTANT: If the user asks for a specific type of clothing (such as 'kemeja', 'shirt', 'dress', 'pants', etc.), "
-                "make sure your recommendations focus directly on that specific clothing type.\n\n"
-                "make each clothing item as a bold text and for the explanation make it as a paragraph and in different line from the title, for new or different item make it in different line."
-                "Example response:\n"
-                "For casual wear, here are some styles that would look great on you:  \n"
-                "- Cropped Tees or Tank Tops  \n– Perfect for a laid-back look, and they can help accentuate your waist and balance out your height.  \n"
-                "- Oversized T-shirts  \n– A relaxed fit in earthy or jewel tones would be flattering. You could tuck them into high-waisted jeans or shorts to add some shape.  \n"
-                "- Off-Shoulder Tops  \n– These are cute and can show off some skin while keeping things casual. They also come in various styles, like long-sleeved or with ruffles, which add a nice detail.  \n"
-                "- Button-Up Shirts (Linen or Cotton)  \n– A lightweight button-up, especially in tan, beige, or pastel shades, could be a staple. You can wear it loose or tied at the waist.  \n"
-                "- Graphic Tees  \n– These are always in style and add personality to any casual outfit. You could go for retro or minimalist designs in colors that complement your skin tone.  \n\n"
-                "Do not mention any specific brand of clothing."
-                "After each style recommendation, always ask a yes or no question: 'Would you like to see product recommendations based on these style suggestions?' or 'Do these styles align with what you're looking for? I can show you specific products if you're interested.'"
-                "DO NOT provide product recommendations in your initial response - only suggest styles and wait for user confirmation.")
-            }]
+                "You are an expert fashion consultant with deep understanding of how clothing interacts with different body types, proportions, and personal attributes. Your mission is to provide personalized, thoughtful fashion recommendations that enhance each user's unique features.\n\n"
+                
+                "CONVERSATION CONTEXT & MEMORY:\n"
+                "- Always remember and reference information the user has shared throughout our conversation\n"
+                "- Build upon previous recommendations and acknowledge their preferences or concerns\n"
+                "- If they mention budget, lifestyle, or specific needs, keep these in mind for all future suggestions\n"
+                "- Reference their previous questions or comments to show you're actively listening\n\n"
+                
+                "ESSENTIAL USER INFORMATION TO GATHER:\n\n"
+                
+                "Basic Information:\n"
+                "- Gender identity and preferred clothing styles\n"
+                "- Height and weight (for proportion considerations)\n"
+                "- Body shape/type if they're comfortable sharing (apple, pear, hourglass, rectangle, etc.)\n"
+                "- Skin tone and undertones (warm, cool, neutral)\n"
+                "- Ethnic background (to consider cultural preferences and what colors/styles typically flatter)\n"
+                "- Lifestyle (professional, casual, active, etc.)\n"
+                "- Any body areas they want to highlight or feel more confident about\n\n"
+                
+                "Specific Style & Fit Preferences:\n\n"
+                
+                "Sleeve Preferences:\n"
+                "- Short sleeve, long sleeve, 3/4 sleeve, sleeveless, or cap sleeve\n"
+                "- Preference for fitted sleeves vs. loose/flowy sleeves\n"
+                "- Comfort level with showing arms\n\n"
+                
+                "Fit Preferences:\n"
+                "- Slim/tailored fit vs. regular fit vs. relaxed/oversized fit\n"
+                "- Preference for form-fitting vs. loose-fitting clothing\n"
+                "- Comfort level with body-hugging vs. flowing silhouettes\n\n"
+                
+                "Length Preferences:\n"
+                "- Top lengths: cropped, regular, tunic, or oversized\n"
+                "- Bottom lengths: mini, knee-length, midi, maxi, or ankle-length\n"
+                "- Dress lengths and comfort zones\n\n"
+                
+                "Neckline Preferences:\n"
+                "- V-neck, crew neck, scoop neck, off-shoulder, turtleneck, or boat neck\n"
+                "- Comfort level with showing décolletage or preferring more coverage\n\n"
+                
+                "Waist Definition:\n"
+                "- Preference for defined waist vs. straight silhouettes\n"
+                "- Comfort with belted looks vs. unstructured fits\n"
+                "- High-waisted vs. mid-rise vs. low-rise preferences\n\n"
+                
+                "Fabric & Texture Preferences:\n"
+                "- Structured vs. flowy fabrics\n"
+                "- Comfort with clingy materials vs. preference for draping fabrics\n"
+                "- Texture preferences (smooth, textured, knit, woven)\n\n"
+                
+                "Pattern & Color Preferences:\n"
+                "- Solid colors vs. patterns (florals, stripes, geometric, etc.)\n"
+                "- Bold/bright colors vs. neutral/muted tones\n"
+                "- Comfort level with prints and how busy they prefer patterns\n\n"
+                
+                "Occasion-Specific Needs:\n"
+                "- Work/professional requirements\n"
+                "- Casual everyday wear preferences\n"
+                "- Special occasion or evening wear needs\n"
+                "- Seasonal considerations and climate\n\n"
+                
+                "BODY-AWARENESS PRINCIPLES:\n"
+                "- Consider how different cuts, fits, and proportions will interact with their specific body type\n"
+                "- Explain WHY certain styles work for their body (e.g., 'A-line dresses will balance your proportions by...')\n"
+                "- Address fit concerns specific to their measurements (sleeve length for arm proportions, inseam for leg length, etc.)\n"
+                "- Consider how fabric drape and structure will look on their body type\n"
+                "- Mention styling tricks that enhance their best features\n"
+                "- Be sensitive about body image - focus on enhancing and flattering, never 'hiding' or 'fixing'\n"
+                "- Explain how their preferred fits will work with their body type and suggest modifications if needed\n\n"
+                
+                "RECOMMENDATION FORMAT:\n"
+                "Provide at least 3 detailed recommendations using this structure:\n"
+                "**[Clothing Item Name]**\n"
+                "Detailed explanation of why this works for their specific body type, skin tone, lifestyle, AND their stated fit/style preferences. Include styling tips and how it addresses their proportions while honoring their preferred fits and styles.\n\n"
+                
+                "COMMUNICATION STYLE:\n"
+                "- Use warm, encouraging, and body-positive language\n"
+                "- Speak conversationally, not in lists or JSON format\n"
+                "- Explain the 'why' behind each recommendation, connecting it to both their body type AND their style preferences\n"
+                "- Include specific styling suggestions for complete looks\n"
+                "- Never mention specific clothing brands\n"
+                "- When their preferences might not be the most flattering for their body type, gently suggest modifications or alternatives while respecting their choices\n\n"
+                
+                "EXAMPLE RESPONSE STRUCTURE:\n"
+                "Based on your [height/body type/skin tone] and your preference for [specific fits/styles mentioned], here are styles that will look amazing on you:\n\n"
+                "**Wrap Dresses in Midi Length**\n"
+                "Since you mentioned loving midi lengths and preferring a defined waist, wrap dresses are perfect for your body type. The wrap style creates that waist definition you enjoy while the A-line skirt balances your proportions beautifully. With your preference for 3/4 sleeves and your warm skin tone, look for wrap dresses in rich jewel tones like emerald or sapphire with sleeves that hit just below your elbow. The V-neckline works well with your comfort level for necklines, and you can style it with the fitted look you prefer by cinching the waist tie.\n\n"
+                
+                "NATURAL CONSULTATION FLOW:\n"
+                "Conduct the consultation like a natural conversation with a human stylist. Follow this process:\n\n"
+                
+                "1. **Start with a warm greeting** and ask what brings them to you today\n"
+                "2. **Ask questions naturally** based on their response - don't bombard them with all questions at once\n"
+                "3. **Ask follow-up questions** based on what they tell you, showing genuine interest\n"
+                "4. **Gradually gather information** through organic conversation, not like a checklist\n"
+                "5. **Reference previous answers** when asking new questions to show you're listening\n"
+                "6. **Ask 2-3 questions maximum** per response to keep it conversational\n"
+                "7. **Explain why you're asking** certain questions when it helps (e.g., 'I'm asking about your lifestyle so I can suggest pieces that work for your daily routine')\n\n"
+                
+                "INFORMATION GATHERING PRIORITY:\n"
+                "Start with the most important information first:\n"
+                "Priority 1: Body type, height, lifestyle, and what they're looking for\n"
+                "Priority 2: STYLE AND FIT PREFERENCES (mandatory before summary), comfort zones\n"
+                "Priority 3: Specific details like fabric preferences, color preferences, and BUDGET CONSTRAINTS\n\n"
+                
+                "MANDATORY STYLE & FIT PREFERENCE INQUIRY:\n"
+                "Before presenting the consultation summary, you MUST ask about style and fit preferences if the user hasn't mentioned them. Use natural questions like:\n"
+                "- 'What's your preference when it comes to fit - do you like more fitted/tailored pieces or do you prefer looser, more relaxed fits?'\n"
+                "- 'Are you drawn to any particular sleeve lengths or neckline styles?'\n"
+                "- 'Do you prefer shorter or longer hemlines? What lengths make you feel most confident?'\n"
+                "- 'When it comes to waist definition, do you like pieces that show your waistline or do you prefer more flowing, unstructured styles?'\n"
+                "- 'Are there any specific styles or fits you absolutely love or want to avoid?'\n"
+                "These preferences are essential for creating truly personalized recommendations.\n\n"
+                
+                "BUDGET INQUIRY:\n"
+                "Always ask about budget considerations during the consultation. Use natural phrasing such as:\n"
+                "- 'Do you have a budget range in mind for these pieces?'\n"
+                "- 'Are there any budget considerations I should keep in mind?'\n"
+                "- 'What's your comfort zone budget-wise for these recommendations?'\n"
+                "- 'Should I focus on more affordable options or are you open to investing in key pieces?'\n"
+                "This helps ensure recommendations are practical and achievable for the user.\n\n"
+                
+                "CONSULTATION CONFIRMATION PROCESS:\n"
+                "Only after you've gathered sufficient information through natural conversation, provide a comprehensive confirmation summary using this format:\n\n"
+                
+                "**CONSULTATION SUMMARY**\n"
+                "Let me confirm all the information I've gathered about you to ensure my recommendations will be perfectly tailored:\n\n"
+                
+                "**Personal Details:**\n"
+                "- Gender Identity: [user's response]\n"
+                "- Height & Weight: [user's response]\n"
+                "- Body Shape: [user's response]\n"
+                "- Skin Tone & Undertones: [user's response]\n"
+                "- Ethnic Background: [user's response]\n"
+                "- Lifestyle: [user's response]\n"
+                "- Areas to Highlight: [user's response]\n\n"
+                
+                "**Style Preferences:**\n"
+                "- Sleeve Preferences: [user's response]\n"
+                "- Fit Preferences: [user's response]\n"
+                "- Length Preferences: [user's response]\n"
+                "- Neckline Preferences: [user's response]\n"
+                "- Waist Definition: [user's response]\n"
+                "- Fabric & Texture: [user's response]\n"
+                "- Pattern & Color: [user's response]\n"
+                "- Occasion Needs: [user's response]\n"
+                "- Budget Considerations: [user's response if mentioned]\n\n"
+                
+                "**Confirmation Question:**\n"
+                "'Is all of this information accurate? Please let me know if anything needs to be corrected or if you'd like to add any additional preferences. Once you confirm this is correct, I'll provide you with personalized style recommendations that perfectly match your body type and preferences!'\n\n"
+                
+                "IMPORTANT CONSULTATION GUIDELINES:\n"
+                "- If a user gives you incomplete information, ask for the missing details naturally\n"
+                "- If they seem hesitant to share certain information, respect their boundaries and work with what you have\n"
+                "- If they only provide basic information initially, ask gentle follow-up questions to get more details\n"
+                "- ALWAYS ask about style and fit preferences before presenting the consultation summary\n"
+                "- Don't present the consultation summary until you have at least Priority 1 AND style/fit preferences\n"
+                "- You can provide recommendations with incomplete Priority 3 information, but Priority 1 and 2 (including style/fit preferences) are mandatory\n\n"
+                
+                "MANDATORY SUMMARY BEFORE RECOMMENDATIONS:\n"
+                "When you have gathered sufficient information (at minimum Priority 1, ideally Priority 2), you MUST present the consultation summary before giving any style recommendations. Use phrases like:\n"
+                "- 'Before I give you my recommendations, let me make sure I have everything right...'\n"
+                "- 'Perfect! Let me summarize what I've learned about you to ensure my suggestions are spot-on...'\n"
+                "- 'Great! Now that I understand your preferences, let me confirm all the details...'\n\n"
+                
+                "DO NOT skip the consultation summary step. ALWAYS present it before recommendations, even if the conversation feels ready to move forward.\n\n"
+                
+                "ONLY proceed with style recommendations AFTER the user confirms the summary is accurate. If they make corrections, update the summary and ask for confirmation again.\n\n"
+                
+                "AFTER PROVIDING RECOMMENDATIONS: Ask 'Do these style suggestions work with your confirmed preferences? Would you like me to suggest specific products based on these recommendations, or would you like to explore any of these styles further?'\n\n"
+                
+                "NEVER provide specific product recommendations in your initial response - focus on explaining why certain styles work for their unique attributes AND their confirmed preferences, then wait for their confirmation before suggesting actual items to purchase."
+            )
+        }]
         
         # Store the most recent AI response for use in confirmation handling
         last_ai_response = ""
         
-        # Store user context for better recommendations
+        # Enhanced user context with semantic capabilities
         user_context = {
             "current_image_url": None,
             "current_text_input": None,
@@ -2685,24 +4411,36 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
             "has_shared_image": False,
             "has_shared_preferences": False,
             "last_query_type": None,
-            "awaiting_confirmation": False,  # Flag to track if we're waiting for user confirmation
-            "accumulated_keywords": {},  # Dictionary to store and accumulate keywords with their weights
+            "awaiting_confirmation": False,
+            "accumulated_keywords": {},
             "preferences": {},
             "known_attributes": {},
-            "user_gender": {  # New field to persistently store user gender information
+            "user_gender": {
                 "category": None,
                 "term": None, 
                 "confidence": 0,
                 "last_updated": None
             },
             "product_cache": {
-                "all_result": pd.DataFrame(),
+                "all_results": pd.DataFrame(),
                 "current_page": 0,
-                "product_per_page": 5,
+                "products_per_page": 5,
                 "last_search_params": {},
                 "has_more": False
-            }
+            },
+            "semantic_enabled": bool(semantic_system.model),  # Track if semantic is available
+            "cultural_context": {},  # Store Indonesian cultural preferences
         }
+
+        # Initialize product preprocessing for semantic search
+        if semantic_system.model:
+            try:
+                print(f"🔄 Initializing semantic system for session {session_id}...")
+                await enhanced_matcher.preprocess_products(db)
+                print(f"✅ Semantic system ready for session {session_id}")
+            except Exception as e:
+                print(f"⚠️ Semantic initialization failed for session {session_id}: {e}")
+                user_context["semantic_enabled"] = False
 
         # Define the GENDER_BOOST constant
         GENDER_BOOST = 2.0  # High confidence score for direct gender matches
@@ -2729,20 +4467,20 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                 
                 # Detect language
                 try:
-                    user_language = session_manager.detect_or_retrieve_language(session_id, user_input)
+                    user_language = session_manager.detect_or_retrieve_language(user_input, session_id)
                     logging.info(f"User language '{user_language}' for session {session_id}")
                 except Exception as e:
                     logging.error(f"Language detection error: {str(e)}")
                     user_language = "en"
                 
-                # Check if we're awaiting confirmation for product recommendations
+                # Enhanced confirmation handling
                 if user_context["awaiting_confirmation"]:
-                    # Process confirmation response
+                    # Process confirmation response with enhanced capabilities
                     is_positive = user_input.strip().lower() in ["yes", "ya", "iya", "sure", "tentu", "ok", "okay"]
                     is_negative = user_input.strip().lower() in ["no", "tidak", "nope", "nah", "tidak usah"]
                     is_more_request = detect_more_products_request(user_input)
 
-                    print(f"\n📋 CONFIRMATION CHECK START")
+                    print(f"\n📋 ENHANCED CONFIRMATION CHECK START")
                     print("="*50)
                     if "accumulated_keywords" in user_context:
                         acc_kw = user_context["accumulated_keywords"]
@@ -2758,59 +4496,57 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         gender_info = user_context["user_gender"]
                         print(f"👤 Gender: {gender_info['category']} (confidence: {gender_info.get('confidence', 0):.1f})")
                     
-                    if "budget_range" in user_context and user_context["budget_range"]:
+                    if "budget_range" in user_context and user_context.get("budget_range"):
                         budget = user_context["budget_range"]
                         print(f"💰 Budget: {budget}")
+                    
+                    print(f"🧠 Semantic: {'Enabled' if user_context['semantic_enabled'] else 'Disabled'}")
                     print("="*50)
 
-                    logging.info(f"Confirmation state - Input: '{user_input}' | Positive: {is_positive}, Negative: {is_negative}, More: {is_more_request}")
+                    logging.info(f"Enhanced confirmation state - Input: '{user_input}' | Positive: {is_positive}, Negative: {is_negative}, More: {is_more_request}")
                     
                     if is_positive:
-                        # User confirmed, show product recommendations
+                        # User confirmed, show enhanced product recommendations
                         try:
-                            # Get accumulated keywords from context (without adding new ones)
+                            # Get accumulated keywords from context
                             accumulated_keywords = []
                             if "accumulated_keywords" in user_context:
-                                # Convert from dictionary to list of tuples format for extract_ranked_keywords
                                 accumulated_keywords = [(k, v["weight"]) for k, v in user_context["accumulated_keywords"].items()]
                                 
-                            # Rank the accumulated keywords based on importance
-                            # Use last AI response and user input for better context
+                            # Use enhanced keyword extraction if semantic is available
                             last_user_input = user_context.get("current_text_input", "")
-                            ranked_keywords = extract_ranked_keywords(
-                                last_ai_response,  # Use the last AI response 
-                                last_user_input,   # Use the user's input 
-                                accumulated_keywords
-                            )
+                            last_ai_response = user_context.get("last_ai_response", "")
                             
+                            if user_context["semantic_enabled"]:
+                                print("🧠 Using enhanced semantic keyword extraction")
+                                ranked_keywords = enhanced_extract_ranked_keywords(
+                                    ai_response=last_ai_response,
+                                    translated_input=last_user_input,
+                                    accumulated_keywords=accumulated_keywords,
+                                    use_semantic=True
+                                )
+                            else:
+                                print("📝 Using standard keyword extraction")
+                                ranked_keywords = extract_ranked_keywords(
+                                    last_ai_response, last_user_input, accumulated_keywords
+                                )
+                            
+                            # Translate keywords if needed
                             if user_language != "en":
-                                # Extract just the keywords
                                 keywords_only = [kw for kw, _ in ranked_keywords]
-                                
-                                # Join keywords with a special delimiter
                                 combined_text = " ||| ".join(keywords_only)
-                                
-                                # Translate the combined text
                                 translated_combined = translate_text(combined_text, "en", session_id)
-                                
-                                # Split back into individual keywords
                                 translated_keywords = translated_combined.split(" ||| ")
                                 
-                                # Check if we got the right number of translations
                                 if len(translated_keywords) == len(ranked_keywords):
-                                    # Rebuild the tuples with original scores
                                     translated_ranked_keywords = [(translated_keywords[i], score) for i, (_, score) in enumerate(ranked_keywords)]
                                 else:
                                     print(f"Translation mismatch: got {len(translated_keywords)} items, expected {len(ranked_keywords)}")
-                                    # Fall back to individual translation
                                     translated_ranked_keywords = [(translate_text(kw, "en", session_id), score) for kw, score in ranked_keywords]
-                                
-                                translated_ranked_keywords = [(translated_keywords[i], score)
-                                                       for i, (_, score) in enumerate(ranked_keywords)]
                             else:
                                 translated_ranked_keywords = ranked_keywords
 
-                            logging.info(f"Using ranked keywords for product search: {translated_ranked_keywords[:15]}")
+                            logging.info(f"Using enhanced ranked keywords for product search: {translated_ranked_keywords[:15]}")
                             
                             # Get user gender and budget for filtering
                             user_gender = user_context.get("user_gender", {}).get("category", None)
@@ -2820,16 +4556,20 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                                 logging.info(f"Using budget filter: {budget_range}")
                                 print(f"Using budget filter: {budget_range}")
                             
-                            # Positive confirmation message
-                            positive_response = "Great! Based on your preferences and style recommendations, here are some products that might interest you:"
+                            # Enhanced confirmation message with semantic indicators
+                            if user_context["semantic_enabled"]:
+                                positive_response = "🧠 **Enhanced AI Search Results** - Here are products that perfectly match your style preferences:"
+                            else:
+                                positive_response = "Great! Based on your preferences and style recommendations, here are some products that might interest you:"
+                            
                             if budget_range:
                                 min_price, max_price = budget_range
                                 if min_price and max_price:
                                     budget_text = f" (within your budget of IDR {min_price:,} - IDR {max_price:,})"
                                 elif max_price:
-                                    budget_text = f" (under {max_price:,})"
+                                    budget_text = f" (under IDR {max_price:,})"
                                 elif min_price:
-                                    budget_text = f" (above {min_price:,})"
+                                    budget_text = f" (above IDR {min_price:,})"
                                 else:
                                     budget_text = ""
                                 positive_response += budget_text
@@ -2837,41 +4577,35 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                             if user_language != "en":
                                 positive_response = translate_text(positive_response, user_language, session_id)
 
-                            print(f"\n🔍 PRODUCT SEARCH INPUTS:")
+                            print(f"\n🔍 ENHANCED PRODUCT SEARCH INPUTS:")
                             print(f"   🎯 Keywords: {len(translated_ranked_keywords)}")
                             for i, (kw, score) in enumerate(translated_ranked_keywords[:15]):
                                 print(f"      {i+1}. '{kw}' → {score:.2f}")
                             print(f"   👤 Gender: {user_gender}")
                             print(f"   💰 Budget: {budget_range}")
+                            print(f"   🧠 Semantic: {'Enabled' if user_context['semantic_enabled'] else 'Disabled'}")
                             print()
                             
-                            # Fetch products using the ranked keywords
+                            # Use enhanced product search if semantic is available
                             try:
-                                recommended_products, budget_status = await fetch_products_with_budget_awareness(
-                                    db=db,  # Make sure db is the AsyncSession object
-                                    top_keywords=translated_ranked_keywords,  # Make sure this is a list of tuples
-                                    max_results=15,
-                                    gender_category=user_gender,
-                                    budget_range=budget_range
+                                recommended_products, budget_status = await enhanced_product_search_with_rebalancing(
+                                    websocket, user_context, session_id, db, user_language, user_context["semantic_enabled"]
                                 )
                                 
-                                print(f"Successfully fetched {len(recommended_products)} products")
+                                print(f"Successfully fetched {len(recommended_products)} products with status: {budget_status}")
 
-                                # Handle different budget scenarios
+                                # Handle different budget scenarios (keep your existing logic)
                                 if budget_status == "no_products_in_budget":
-                                    # No products within budget - ask user what to do
                                     cheapest_price = recommended_products['price'].min() if not recommended_products.empty else None
                                     most_expensive_price = recommended_products['price'].max() if not recommended_products.empty else None
                                     
                                     budget_messages = generate_budget_message(budget_range, user_language, cheapest_price, most_expensive_price)
                                     budget_response = budget_messages["show_outside_budget"]
                                     
-                                    # Save the products for potential display and set awaiting budget decision flag
                                     user_context["pending_products"] = recommended_products
                                     user_context["awaiting_budget_decision"] = True
                                     user_context["budget_scenario"] = "show_outside_budget"
                                     
-                                    # Send budget constraint message
                                     new_ai_message = ChatHistoryDB(
                                         session_id=session_id,
                                         message_type="assistant",
@@ -2881,10 +4615,9 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                                     await db.commit()
                                     
                                     await websocket.send_text(f"{session_id}|{budget_response}")
-                                    return  # Exit early, wait for user decision
+                                    continue
                                     
                                 elif budget_status == "no_products_found":
-                                    # No products found at all
                                     budget_messages = generate_budget_message(budget_range, user_language)
                                     no_products_response = budget_messages["no_products"]
                                     
@@ -2900,10 +4633,10 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                                     await db.commit()
                                     
                                     await websocket.send_text(f"{session_id}|{no_products_response}")
-                                    return
+                                    continue
                                 
                             except Exception as fetch_error:
-                                logging.error(f"Error calling fetch_products_from_db: {str(fetch_error)}")
+                                logging.error(f"Error calling enhanced product search: {str(fetch_error)}")
                                 logging.error(f"Parameters passed:")
                                 logging.error(f"- db: {type(db)}")
                                 logging.error(f"- top_keywords: {type(translated_ranked_keywords)} - {translated_ranked_keywords[:3] if translated_ranked_keywords else 'None'}")
@@ -2911,6 +4644,7 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                                 logging.error(f"- budget_range: {budget_range}")
                                 raise
                             
+                            # Cache results for pagination
                             user_context["product_cache"]["all_results"] = recommended_products
                             user_context["product_cache"]["current_page"] = 0
                             user_context["product_cache"]["has_more"] = len(recommended_products) > 5
@@ -2923,42 +4657,54 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
 
                             user_context["product_cache"]["has_more"] = has_more
 
-                            # Create response with product cards
+                            # Create enhanced response with semantic indicators
                             if not first_page_products.empty:
                                 complete_response = positive_response + "\n\n"
                                 
                                 for _, row in first_page_products.iterrows():
-                                    # Create a simpler, more robust product card structure
+                                    # Enhanced product card with semantic relevance indicator
+                                    relevance_indicator = ""
+                                    if 'semantic_match' in row and row.get('semantic_match', False):
+                                        relevance_score = row.get('relevance', 0)
+                                        if relevance_score >= 0.7:
+                                            relevance_indicator = "🎯 **Perfect AI Match** | "
+                                        elif relevance_score >= 0.5:
+                                            relevance_indicator = "✅ **Good AI Match** | "
+                                        else:
+                                            relevance_indicator = "📝 **Related** | "
+                                    elif user_context["semantic_enabled"]:
+                                        # Even for keyword matches, show it's enhanced
+                                        relevance_indicator = "🔍 **Enhanced Match** | "
+                                    
                                     product_card = (
                                         "<div class='product-card'>\n"
                                         f"<img src='{row['photo']}' alt='{row['product']}' class='product-image'>\n"
-                                        f"<div class='product-info'>\n"  # Separate container for text info
-                                        f"<h3>{row['product']}</h3>\n"
-                                        f"<p class='price'>IDR {row['price']}</p>\n"
+                                        f"<div class='product-info'>\n"
+                                        f"<h3>{relevance_indicator}{row['product']}</h3>\n"
+                                        f"<p class='price'>IDR {row['price']:,.0f}</p>\n"
                                         f"<p class='description'>{row['description']}</p>\n"
                                         f"<p class='available'>Available in size: {row['size']}, Color: {row['color']}</p>\n"
                                         f"<a href='{row['link']}' target='_blank' class='product-link'>Buy Now</a>\n"
-                                        "</div>\n"  # Close the product-info div
-                                        "</div>\n"  # Close the product-card div
+                                        "</div>\n"
+                                        "</div>\n"
                                     )
                                     complete_response += product_card
                                 
                                 if has_more:
-                                    complete_response += "\n\nWould you like to see more options? Just ask for 'more products' or 'lainnya'!"
+                                    if user_context["semantic_enabled"]:
+                                        complete_response += "\n\n🧠 **Want to see more AI-matched products?** Just ask for 'more products' or 'lainnya'!"
+                                    else:
+                                        complete_response += "\n\nWould you like to see more options? Just ask for 'more products' or 'lainnya'!"
                             else:
                                 complete_response = positive_response + "\n\nI'm sorry, but I couldn't find specific product recommendations at the moment. Would you like me to help you with something else?"
-                                budget_msg = ""
 
-                            # For translation, use a more robust method to protect HTML tags
+                            # Handle translation while protecting HTML (your existing method)
                             if user_language != "en":
                                 try:
-                                    # Alternative approach to protect HTML: encode entire HTML blocks
                                     def encode_html_blocks(text):
-                                        # Define a pattern that matches complete HTML elements with content
                                         pattern = r'(<div class=\'product-card\'>.*?</div>\n)'
                                         blocks = []
                                         
-                                        # Replace each block with a placeholder
                                         def replace_block(match):
                                             nonlocal blocks
                                             placeholder = f"__HTML_BLOCK_{len(blocks)}__"
@@ -2968,23 +4714,18 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                                         protected_text = re.sub(pattern, replace_block, text, flags=re.DOTALL)
                                         return protected_text, blocks
                                     
-                                    # Decode HTML blocks after translation
                                     def decode_html_blocks(text, blocks):
                                         for i, block in enumerate(blocks):
                                             text = text.replace(f"__HTML_BLOCK_{i}__", block)
                                         return text
                                     
-                                    # Protect complete HTML blocks
                                     protected_text, html_blocks = encode_html_blocks(complete_response)
-                                    
-                                    # Translate the protected text
                                     translated_protected = translate_text(protected_text, user_language, session_id)
-                                    
-                                    # Restore the HTML blocks
                                     translated_response = decode_html_blocks(translated_protected, html_blocks)
+                                    
                                 except Exception as e:
                                     logging.error(f"Error in HTML protection during translation: {str(e)}")
-                                    # Fallback to original method if new method fails
+                                    # Fallback to original method
                                     html_tags = {}
                                     pattern = r'<[^>]+>'
                                     
@@ -2993,10 +4734,8 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                                         html_tags[placeholder] = match.group(0)
                                         complete_response = complete_response.replace(match.group(0), placeholder, 1)
                                     
-                                    # Translate text
                                     translated_response = translate_text(complete_response, user_language, session_id)
                                     
-                                    # Restore HTML tags
                                     for placeholder, tag in html_tags.items():
                                         translated_response = translated_response.replace(placeholder, tag)
                             else:
@@ -3011,13 +4750,13 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                             db.add(new_ai_message)
                             await db.commit()
                             
-                            # Send the response
+                            # Send the enhanced response
                             complete_response_html = render_markdown(translated_response)
-                            print(f"{complete_response_html}")
+                            print(f"📤 Sending enhanced product recommendations to user")
                             await websocket.send_text(f"{session_id}|{complete_response_html}")
                             
                         except Exception as e:
-                            logging.error(f"Error during product recommendation: {str(e)}")
+                            logging.error(f"Error during enhanced product recommendation: {str(e)}")
                             error_msg = "I'm sorry, I couldn't fetch product recommendations. Is there something else you'd like to know about fashion?"
                             if user_language != "en":
                                 error_msg = translate_text(error_msg, user_language, session_id)
@@ -3027,10 +4766,9 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         user_context["awaiting_confirmation"] = True
 
                     elif is_more_request:
-                        # USER wants MORE products - handle pagination properly
-                        logging.info("🔄 User requesting MORE products")
+                        # Enhanced "more products" handling
+                        logging.info("🔄 User requesting MORE products (Enhanced)")
                         
-                        # Check if we have cached results for pagination
                         if not user_context["product_cache"]["all_results"].empty:
                             current_page = user_context["product_cache"]["current_page"]
                             next_page = current_page + 1
@@ -3043,24 +4781,32 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                             )
                             
                             if not next_page_products.empty:
-                                # Update pagination state
                                 user_context["product_cache"]["current_page"] = next_page
                                 user_context["product_cache"]["has_more"] = has_more
                                 
-                                # Create natural response for more products
-                                more_responses_en = [
-                                    "Here are some more options that might interest you:",
-                                    "I found some additional styles you might like:",
-                                    "Let me show you a few more possibilities:",
-                                    "Here are some other great choices:",
-                                ]
-                                
-                                more_responses_id = [
-                                    "Berikut beberapa pilihan lain yang mungkin menarik:",
-                                    "Saya menemukan beberapa gaya tambahan yang mungkin Anda suka:",
-                                    "Mari saya tunjukkan beberapa kemungkinan lainnya:",
-                                    "Berikut beberapa pilihan bagus lainnya:",
-                                ]
+                                # Enhanced responses with semantic awareness
+                                if user_context["semantic_enabled"]:
+                                    more_responses_en = [
+                                        "🧠 Here are more AI-matched options for you:",
+                                        "🔍 I found additional styles that perfectly match your preferences:",
+                                        "✨ More personalized recommendations from our AI:",
+                                    ]
+                                    more_responses_id = [
+                                        "🧠 Berikut pilihan lain yang cocok dengan AI:",
+                                        "🔍 Saya menemukan gaya tambahan yang sesuai preferensi:",
+                                        "✨ Rekomendasi personal lainnya dari AI:",
+                                    ]
+                                else:
+                                    more_responses_en = [
+                                        "Here are some more options that might interest you:",
+                                        "I found some additional styles you might like:",
+                                        "Let me show you a few more possibilities:",
+                                    ]
+                                    more_responses_id = [
+                                        "Berikut beberapa pilihan lain yang mungkin menarik:",
+                                        "Saya menemukan beberapa gaya tambahan yang mungkin Anda suka:",
+                                        "Mari saya tunjukkan beberapa kemungkinan lainnya:",
+                                    ]
                                 
                                 import random
                                 if user_language != "en":
@@ -3082,16 +4828,29 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                                         budget_text = ""
                                     positive_response += budget_text
                                 
-                                # Generate product cards for NEXT PAGE ONLY
+                                # Generate enhanced product cards for next page
                                 complete_response = positive_response + "\n\n"
                                 
                                 for _, row in next_page_products.iterrows():
+                                    # Enhanced product card with semantic indicators
+                                    relevance_indicator = ""
+                                    if 'semantic_match' in row and row.get('semantic_match', False):
+                                        relevance_score = row.get('relevance', 0)
+                                        if relevance_score >= 0.7:
+                                            relevance_indicator = "🎯 **Perfect AI Match** | "
+                                        elif relevance_score >= 0.5:
+                                            relevance_indicator = "✅ **Good AI Match** | "
+                                        else:
+                                            relevance_indicator = "📝 **Related** | "
+                                    elif user_context["semantic_enabled"]:
+                                        relevance_indicator = "🔍 **Enhanced Match** | "
+                                    
                                     product_card = (
                                         "<div class='product-card'>\n"
                                         f"<img src='{row['photo']}' alt='{row['product']}' class='product-image'>\n"
                                         f"<div class='product-info'>\n"
-                                        f"<h3>{row['product']}</h3>\n"
-                                        f"<p class='price'>IDR {row['price']}</p>\n"
+                                        f"<h3>{relevance_indicator}{row['product']}</h3>\n"
+                                        f"<p class='price'>IDR {row['price']:,.0f}</p>\n"
                                         f"<p class='description'>{row['description']}</p>\n"
                                         f"<p class='available'>Available in size: {row['size']}, Color: {row['color']}</p>\n"
                                         f"<a href='{row['link']}' target='_blank' class='product-link'>Buy Now</a>\n"
@@ -3100,24 +4859,35 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                                     )
                                     complete_response += product_card
                                 
-                                # Add appropriate footer based on whether more products are available
+                                # Enhanced footer with semantic awareness
                                 if has_more:
                                     if user_language != "en":
-                                        more_hint = translate_text("\n\nI have even more options if you'd like to continue exploring! Just let me know if you want to see more.", user_language, session_id)
+                                        if user_context["semantic_enabled"]:
+                                            more_hint = translate_text("\n\n🧠 I have even more AI-matched options! Just let me know if you want to continue exploring.", user_language, session_id)
+                                        else:
+                                            more_hint = translate_text("\n\nI have even more options if you'd like to continue exploring! Just let me know if you want to see more.", user_language, session_id)
                                     else:
-                                        more_hint = "\n\nI have even more options if you'd like to continue exploring! Just let me know if you want to see more."
+                                        if user_context["semantic_enabled"]:
+                                            more_hint = "\n\n🧠 I have even more AI-matched options! Just let me know if you want to continue exploring."
+                                        else:
+                                            more_hint = "\n\nI have even more options if you'd like to continue exploring! Just let me know if you want to see more."
                                     complete_response += more_hint
                                 else:
                                     if user_language != "en":
-                                        end_hint = translate_text("\n\nThat's all the products I found based on your preferences. Is there anything else I can help you with, or would you like to try a different search?", user_language, session_id)
+                                        if user_context["semantic_enabled"]:
+                                            end_hint = translate_text("\n\n🎯 That's all the AI-matched products I found! Is there anything else I can help you with, or would you like to try a different search?", user_language, session_id)
+                                        else:
+                                            end_hint = translate_text("\n\nThat's all the products I found based on your preferences. Is there anything else I can help you with, or would you like to try a different search?", user_language, session_id)
                                     else:
-                                        end_hint = "\n\nThat's all the products I found based on your preferences. Is there anything else I can help you with, or would you like to try a different search?"
+                                        if user_context["semantic_enabled"]:
+                                            end_hint = "\n\n🎯 That's all the AI-matched products I found! Is there anything else I can help you with, or would you like to try a different search?"
+                                        else:
+                                            end_hint = "\n\nThat's all the products I found based on your preferences. Is there anything else I can help you with, or would you like to try a different search?"
                                     complete_response += end_hint
                                 
-                                # Handle translation while protecting HTML
+                                # Handle translation (same method as before)
                                 if user_language != "en":
                                     try:
-                                        # Protect HTML blocks during translation
                                         def encode_html_blocks(text):
                                             pattern = r'(<div class=\'product-card\'>.*?</div>\n)'
                                             blocks = []
@@ -3136,14 +4906,12 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                                                 text = text.replace(f"__HTML_BLOCK_{i}__", block)
                                             return text
                                         
-                                        # Protect and translate
                                         protected_text, html_blocks = encode_html_blocks(complete_response)
                                         translated_protected = translate_text(protected_text, user_language, session_id)
                                         translated_response = decode_html_blocks(translated_protected, html_blocks)
                                         
                                     except Exception as e:
                                         logging.error(f"Error in HTML protection during translation: {str(e)}")
-                                        # Fallback translation method
                                         html_tags = {}
                                         pattern = r'<[^>]+>'
                                         
@@ -3172,21 +4940,28 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                                 complete_response_html = render_markdown(translated_response)
                                 await websocket.send_text(f"{session_id}|{complete_response_html}")
                                 
-                                # Log pagination info
+                                # Log enhanced pagination info
                                 total_products = len(user_context["product_cache"]["all_results"])
                                 products_shown = (next_page + 1) * products_per_page
-                                logging.info(f"📄 Showed page {next_page + 1}, products {current_page * products_per_page + 1}-{min(products_shown, total_products)} of {total_products}")
+                                logging.info(f"📄 Enhanced pagination: Page {next_page + 1}, products {current_page * products_per_page + 1}-{min(products_shown, total_products)} of {total_products}")
+                                logging.info(f"📊 Semantic enabled: {user_context['semantic_enabled']}")
                                 logging.info(f"📊 Has more pages: {has_more}")
                                 
                                 # Keep awaiting confirmation for potential more requests
                                 user_context["awaiting_confirmation"] = True
                                 
                             else:
-                                # No more products on next page (edge case)
+                                # No more products available
                                 if user_language != "en":
-                                    no_more_msg = translate_text("I've shown you all the best matches I could find. Would you like to try a different style or adjust your preferences?", user_language, session_id)
+                                    if user_context["semantic_enabled"]:
+                                        no_more_msg = translate_text("🎯 I've shown you all the best AI matches I could find. Would you like to try a different style or adjust your preferences?", user_language, session_id)
+                                    else:
+                                        no_more_msg = translate_text("I've shown you all the best matches I could find. Would you like to try a different style or adjust your preferences?", user_language, session_id)
                                 else:
-                                    no_more_msg = "I've shown you all the best matches I could find. Would you like to try a different style or adjust your preferences?"
+                                    if user_context["semantic_enabled"]:
+                                        no_more_msg = "🎯 I've shown you all the best AI matches I could find. Would you like to try a different style or adjust your preferences?"
+                                    else:
+                                        no_more_msg = "I've shown you all the best matches I could find. Would you like to try a different style or adjust your preferences?"
                                 
                                 new_ai_message = ChatHistoryDB(
                                     session_id=session_id,
@@ -3201,7 +4976,7 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                                 user_context["awaiting_confirmation"] = False
                         
                         else:
-                            # No cached results available - this shouldn't happen if flow is correct
+                            # No cached results available
                             logging.warning("🚨 No cached results available for 'more' request")
                             
                             if user_language != "en":
@@ -3221,7 +4996,7 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                             user_context["awaiting_confirmation"] = False
 
                     elif user_context.get("awaiting_budget_decision", False):
-                        # User is responding to budget constraint message
+                        # Handle budget decision responses (keep your existing budget handling logic)
                         budget_response_type = detect_budget_response(user_input)
                         budget_scenario = user_context.get("budget_scenario", "")
                         
@@ -3231,7 +5006,11 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                             
                             if not pending_products.empty:
                                 # Show the products that were outside budget
-                                positive_response = "Great! Here are the product recommendations outside your budget range:"
+                                if user_context["semantic_enabled"]:
+                                    positive_response = "🧠 **Enhanced AI Results** - Here are the product recommendations outside your budget range:"
+                                else:
+                                    positive_response = "Great! Here are the product recommendations outside your budget range:"
+                                
                                 if user_language != "en":
                                     positive_response = translate_text(positive_response, user_language, session_id)
                                 
@@ -3244,8 +5023,76 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                                 user_context["product_cache"]["current_page"] = 0
                                 user_context["product_cache"]["has_more"] = has_more
                                 
-                                # ... continue with existing product card generation ...
+                                # Generate product cards with enhanced indicators
+                                complete_response = positive_response + "\n\n"
                                 
+                                for _, row in first_page_products.iterrows():
+                                    relevance_indicator = ""
+                                    if 'semantic_match' in row and row.get('semantic_match', False):
+                                        relevance_score = row.get('relevance', 0)
+                                        if relevance_score >= 0.7:
+                                            relevance_indicator = "🎯 **Perfect AI Match** | "
+                                        elif relevance_score >= 0.5:
+                                            relevance_indicator = "✅ **Good AI Match** | "
+                                        else:
+                                            relevance_indicator = "📝 **Related** | "
+                                    elif user_context["semantic_enabled"]:
+                                        relevance_indicator = "🔍 **Enhanced Match** | "
+                                    
+                                    product_card = (
+                                        "<div class='product-card'>\n"
+                                        f"<img src='{row['photo']}' alt='{row['product']}' class='product-image'>\n"
+                                        f"<div class='product-info'>\n"
+                                        f"<h3>{relevance_indicator}{row['product']}</h3>\n"
+                                        f"<p class='price'>IDR {row['price']:,.0f}</p>\n"
+                                        f"<p class='description'>{row['description']}</p>\n"
+                                        f"<p class='available'>Available in size: {row['size']}, Color: {row['color']}</p>\n"
+                                        f"<a href='{row['link']}' target='_blank' class='product-link'>Buy Now</a>\n"
+                                        "</div>\n"
+                                        "</div>\n"
+                                    )
+                                    complete_response += product_card
+                                
+                                # Handle translation and send response
+                                if user_language != "en":
+                                    try:
+                                        def encode_html_blocks(text):
+                                            pattern = r'(<div class=\'product-card\'>.*?</div>\n)'
+                                            blocks = []
+                                            
+                                            def replace_block(match):
+                                                nonlocal blocks
+                                                placeholder = f"__HTML_BLOCK_{len(blocks)}__"
+                                                blocks.append(match.group(0))
+                                                return placeholder
+                                            
+                                            protected_text = re.sub(pattern, replace_block, text, flags=re.DOTALL)
+                                            return protected_text, blocks
+                                        
+                                        def decode_html_blocks(text, blocks):
+                                            for i, block in enumerate(blocks):
+                                                text = text.replace(f"__HTML_BLOCK_{i}__", block)
+                                            return text
+                                        
+                                        protected_text, html_blocks = encode_html_blocks(complete_response)
+                                        translated_protected = translate_text(protected_text, user_language, session_id)
+                                        translated_response = decode_html_blocks(translated_protected, html_blocks)
+                                    except:
+                                        translated_response = complete_response
+                                else:
+                                    translated_response = complete_response
+                                
+                                new_ai_message = ChatHistoryDB(
+                                    session_id=session_id,
+                                    message_type="assistant",
+                                    content=complete_response
+                                )
+                                db.add(new_ai_message)
+                                await db.commit()
+                                
+                                complete_response_html = render_markdown(translated_response)
+                                await websocket.send_text(f"{session_id}|{complete_response_html}")
+                            
                             # Clear budget decision flags
                             user_context["awaiting_budget_decision"] = False
                             user_context["pending_products"] = pd.DataFrame()
@@ -3253,7 +5100,7 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                             user_context["awaiting_confirmation"] = True
                             
                         elif budget_response_type == "adjust_budget":
-                            # User wants to adjust budget
+                            # User wants to adjust budget (keep your existing logic)
                             budget_adjustment, confidence = detect_budget_adjustment_request(user_input)
                             
                             if budget_adjustment and confidence > 0.6:
@@ -3358,7 +5205,7 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         user_context["awaiting_confirmation"] = False
                     
                     else:
-                        # Extract keywords from the user's additional input
+                        # Extract keywords from the user's additional input and continue
                         if user_language != "en":
                             translated_input = translate_text(user_input, "en", session_id)
                         else:
@@ -3368,20 +5215,23 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         user_context["current_text_input"] = user_input
                             
                         # Extract and update keywords from this additional context
-                        additional_keywords = extract_ranked_keywords("", translated_input)
-                        update_accumulated_keywords(additional_keywords, user_context, is_user_input=True)
+                        if user_context["semantic_enabled"]:
+                            additional_keywords = enhanced_extract_ranked_keywords("", translated_input, use_semantic=True)
+                        else:
+                            additional_keywords = extract_ranked_keywords("", translated_input)
+                        
+                        update_accumulated_keywords(additional_keywords, user_context, user_input, is_user_input=True)
                         
                         # Continue with regular processing
                         user_context["awaiting_confirmation"] = False
                 
-                # Check if input contains an image URL
+                # Check if input contains an image URL (keep your existing image processing)
                 url_pattern = re.compile(r'(https?://\S+\.(?:jpg|jpeg|png|gif|bmp|webp))', re.IGNORECASE)
                 image_url_match = url_pattern.search(user_input)
                 
                 if not user_context["awaiting_confirmation"] and image_url_match:
-                    # Process image input (with or without text)
+                    # Process image input with enhanced capabilities
                     image_url = image_url_match.group(1)
-                    # Extract text content by removing the image URL
                     text_content = user_input.replace(image_url, "").strip()
                     
                     try:
@@ -3389,9 +5239,9 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         user_context["has_shared_image"] = True
                         user_context["last_query_type"] = "mixed" if text_content else "image"
                         user_context["current_image_url"] = image_url
-                        user_context["current_text_input"] = text_content  # Save text content for keyword extraction
+                        user_context["current_text_input"] = text_content
 
-                        # Call image analysis
+                        # Call your existing image analysis
                         clothing_features = await analyze_uploaded_image(image_url)
 
                         # Error handling for image analysis
@@ -3399,7 +5249,6 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                             error_message = clothing_features
                             logging.warning(f"Image analysis error: {error_message}")
 
-                            # Save error message to database
                             new_error_message = ChatHistoryDB(
                                 session_id=session_id,
                                 message_type="assistant",
@@ -3408,34 +5257,36 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                             db.add(new_error_message)
                             await db.commit()
 
-                            # Send error response
                             await websocket.send_text(f"{session_id}|{error_message}")
                             continue
 
-                        # Direct gender detection from text content
+                        # Enhanced gender detection from text content
                         if text_content:
-                            force_update = detect_gender_change_request(text_content)
-                            detect_and_update_gender(text_content, user_context, force_update)
+                            force_update = detect_gender_change_request(user_input)
+                            detect_and_update_gender(user_input, user_context, force_update)
 
-                        # Prepare prompt based on whether there's additional text or just an image
-                        # Include gender information if available
-                        user_gender_info = get_user_gender(user_context)
+                        # Prepare enhanced prompt with semantic awareness
+                        gender_info = get_user_gender(user_context)
+                        user_gender = gender_info["category"] if gender_info["is_valid"] else None
                         gender_context = ""
                         if user_gender_info["category"]:
                             gender_context = f" I am {user_gender_info['category']}."
+                        
+                        semantic_context = ""
+                        if user_context["semantic_enabled"]:
+                            semantic_context = " Please provide detailed style recommendations that I can use for enhanced AI-powered product matching."
                             
                         if text_content:
-                            prompt = f"I've shared an image with the following request: '{text_content}'.{gender_context} Here's what the image shows: {clothing_features}. Please give me style recommendations based on this image and my specific request, but DO NOT offer product recommendations yet."
+                            prompt = f"I've shared an image with the following request: '{text_content}'.{gender_context}{semantic_context} Here's what the image shows: {clothing_features}. Please give me style recommendations based on this image and my specific request, but DO NOT offer product recommendations yet."
                         else:
-                            prompt = f"I've shared an image.{gender_context} Here's what the image shows: {clothing_features}. Please give me style recommendations based on this image, but DO NOT offer product recommendations yet."
+                            prompt = f"I've shared an image.{gender_context}{semantic_context} Here's what the image shows: {clothing_features}. Please give me style recommendations based on this image, but DO NOT offer product recommendations yet."
                         
-                        # Generate styling recommendations based on image and text
+                        # Generate styling recommendations
                         message_objects.append({
                             "role": "user",
                             "content": prompt
                         })
 
-                        # Get AI style recommendation response
                         response = openai.chat.completions.create(
                             model="gpt-3.5-turbo",
                             messages=message_objects,
@@ -3444,7 +5295,6 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         
                         ai_response = response.choices[0].message.content.strip()
                         last_ai_response = ai_response
-
                         user_context["last_ai_response"] = ai_response
                         
                         message_objects.append({
@@ -3452,24 +5302,32 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                             "content": ai_response
                         })
 
-                        # Extract and accumulate keywords from image analysis with high weight
-                        image_keywords = extract_ranked_keywords(clothing_features, "")
-                        update_accumulated_keywords(image_keywords, user_context, is_user_input=True)
+                        # Enhanced keyword extraction from image analysis
+                        if user_context["semantic_enabled"]:
+                            image_keywords = enhanced_extract_ranked_keywords(clothing_features, "", use_semantic=True)
+                        else:
+                            image_keywords = extract_ranked_keywords(clothing_features, "")
+                        update_accumulated_keywords(image_keywords, user_context, user_input, is_user_input=True)
                         
-                        # Also process text content keywords if available
+                        # Process text content keywords if available
                         if text_content:
-                            text_keywords = extract_ranked_keywords("", text_content)
-                            update_accumulated_keywords(text_keywords, user_context, is_user_input=True)
+                            if user_context["semantic_enabled"]:
+                                text_keywords = enhanced_extract_ranked_keywords("", text_content, use_semantic=True)
+                            else:
+                                text_keywords = extract_ranked_keywords("", text_content)
+                            update_accumulated_keywords(text_keywords, user_context, user_input, is_user_input=True)
                         
-                        # Extract and accumulate keywords from AI style suggestions
-                        style_keywords = extract_ranked_keywords(ai_response, "")
-                        update_accumulated_keywords(style_keywords, user_context, is_ai_response=True)
+                        # Extract keywords from AI style suggestions
+                        if user_context["semantic_enabled"]:
+                            style_keywords = enhanced_extract_ranked_keywords(ai_response, "", use_semantic=True)
+                        else:
+                            style_keywords = extract_ranked_keywords(ai_response, "")
+                        update_accumulated_keywords(style_keywords, user_context, user_input, is_ai_response=True)
                         
-                        # Log the updated keywords and gender information
-                        logging.info(f"Updated accumulated keywords after image analysis: {user_context['accumulated_keywords']}")
+                        # Enhanced logging
+                        logging.info(f"Enhanced image analysis - Semantic enabled: {user_context['semantic_enabled']}")
+                        logging.info(f"Updated accumulated keywords after enhanced image analysis: {user_context['accumulated_keywords']}")
                         logging.info(f"Current user gender info: {user_context['user_gender']}")
-                        print(f"Updated accumulated keywords after image analysis: {user_context['accumulated_keywords']}")
-                        print(f"Current user gender info: {user_context['user_gender']}")
 
                         # Translate if needed
                         if user_language != "en":
@@ -3477,7 +5335,7 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         else:
                             translated_ai_response = ai_response
 
-                        # Save and send styling recommendations
+                        # Save and send enhanced styling recommendations
                         new_ai_message = ChatHistoryDB(
                             session_id=session_id,
                             message_type="assistant",
@@ -3494,23 +5352,28 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         user_context["awaiting_confirmation"] = True
 
                     except Exception as input_error:
-                        logging.error(f"Error during image processing: {str(input_error)}\n{traceback.format_exc()}")
+                        logging.error(f"Error during enhanced image processing: {str(input_error)}\n{traceback.format_exc()}")
                         error_msg = "Sorry, there was an issue processing your image. Could you try again?"
                         await websocket.send_text(f"{session_id}|{error_msg}")
                 
-                # Handle normal text input (if no image was processed and not waiting for confirmation)
+                # Handle normal text input with enhanced capabilities
                 elif not user_context["awaiting_confirmation"]:
 
-                    print(f"\n📋 TEXT PROCESSING START")
+                    print(f"\n📋 ENHANCED TEXT PROCESSING START")
                     print("="*50)
                     print(f"📝 User input: '{user_input}'")
-                    if "budget_range" in user_context and user_context["budget_range"]:
+                    print(f"🧠 Semantic: {'Enabled' if user_context['semantic_enabled'] else 'Disabled'}")
+                    if "budget_range" in user_context and user_context.get("budget_range"):
                         print(f"💰 Current budget: {user_context['budget_range']}")
                     print("="*50)
 
                     # Check for small talk
                     if await is_small_talk(user_input):
-                        ai_response = "Hello! How can I assist you with fashion recommendations today? Feel free to share information about your style preferences or upload an image for personalized suggestions."
+                        if user_context["semantic_enabled"]:
+                            ai_response = "🧠 Hello! I'm your enhanced AI fashion assistant. How can I help you with personalized fashion recommendations today? Feel free to share information about your style preferences or upload an image for AI-powered suggestions."
+                        else:
+                            ai_response = "Hello! How can I assist you with fashion recommendations today? Feel free to share information about your style preferences or upload an image for personalized suggestions."
+                        
                         if user_language != "en":
                             ai_response = translate_text(ai_response, user_language, session_id)
                             
@@ -3525,7 +5388,7 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         await websocket.send_text(f"{session_id}|{ai_response}")
                         continue
                     
-                    # Process text input for style recommendations
+                    # Enhanced text processing
                     user_context["last_query_type"] = "text"
                     user_context["current_text_input"] = user_input
 
@@ -3535,21 +5398,32 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                     else:
                         translated_input = user_input
                     
-                    # Direct gender detection from text
+                    # Enhanced gender detection
                     force_update = detect_gender_change_request(user_input)
                     detect_and_update_gender(translated_input, user_context, force_update)
                         
-                    # Extract and accumulate keywords from user input with high weight
-                    input_keywords = extract_ranked_keywords("", translated_input)
-                    update_accumulated_keywords(input_keywords, user_context, is_user_input=True)
+                    # Enhanced keyword extraction
+                    if user_context["semantic_enabled"]:
+                        input_keywords = enhanced_extract_ranked_keywords("", translated_input, use_semantic=True)
+                        print(f"🧠 Enhanced semantic keyword extraction completed")
+                    else:
+                        input_keywords = extract_ranked_keywords("", translated_input)
+                        print(f"📝 Standard keyword extraction completed")
                     
-                    # Add to message history - keep it simple
+                    update_accumulated_keywords(input_keywords, user_context, user_input, is_user_input=True)
+                    
+                    # Enhanced conversation context
+                    enhanced_context = ""
+                    if user_context["semantic_enabled"]:
+                        enhanced_context = " I have advanced AI capabilities to provide highly personalized fashion recommendations."
+                    
+                    # Add to message history with enhanced context
                     message_objects.append({
                         "role": "user",
-                        "content": translated_input,
+                        "content": translated_input + enhanced_context,
                     })
                     
-                    # Get AI response with style recommendations
+                    # Get AI response with enhanced styling recommendations
                     response = openai.chat.completions.create(
                         model="gpt-3.5-turbo",
                         messages=message_objects,
@@ -3558,7 +5432,6 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                     
                     ai_response = response.choices[0].message.content.strip()
                     last_ai_response = ai_response
-
                     user_context["last_ai_response"] = ai_response
                     
                     message_objects.append({
@@ -3566,15 +5439,17 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         "content": ai_response
                     })
                     
-                    # Extract and accumulate keywords from AI response
-                    response_keywords = extract_ranked_keywords(ai_response, "")
-                    update_accumulated_keywords(response_keywords, user_context, is_ai_response=True)
+                    # Enhanced keyword extraction from AI response
+                    if user_context["semantic_enabled"]:
+                        response_keywords = enhanced_extract_ranked_keywords(ai_response, "", use_semantic=True)
+                    else:
+                        response_keywords = extract_ranked_keywords(ai_response, "")
+                    update_accumulated_keywords(response_keywords, user_context, user_input, is_ai_response=True)
                     
-                    # Log the updated keywords and gender information
-                    logging.info(f"Updated accumulated keywords after text conversation: {user_context['accumulated_keywords']}")
+                    # Enhanced logging
+                    logging.info(f"Enhanced text conversation - Semantic enabled: {user_context['semantic_enabled']}")
+                    logging.info(f"Updated accumulated keywords after enhanced text conversation: {user_context['accumulated_keywords']}")
                     logging.info(f"Current user gender info: {user_context['user_gender']}")
-                    print(f"Updated accumulated keywords after text conversation: {user_context['accumulated_keywords']}")
-                    print(f"Current user gender info: {user_context['user_gender']}")
                     
                     # Translate back if needed
                     if user_language != "en":
@@ -3591,32 +5466,41 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                     db.add(new_ai_message)
                     await db.commit()
                     
-                    # Render and send
+                    # Render and send enhanced response
                     ai_response_html = render_markdown(translated_response)
                     await websocket.send_text(f"{session_id}|{ai_response_html}")
 
-                    # Check for rapid preference changes
+                    # Enhanced context management
                     detect_rapid_preference_changes(user_input, user_context)
                     
                     # Save current text input
                     user_context["current_text_input"] = user_input
                     
-                    # SMART KEYWORD EXTRACTION with flexible context
-                    input_keywords = extract_ranked_keywords("", translated_input, 
-                                                                accumulated_keywords=[(k, v["weight"]) for k, v in user_context.get("accumulated_keywords", {}).items()])                                                       
-                    # FLEXIBLE CONTEXT UPDATE
-                    smart_keyword_context_update(user_input, user_context, input_keywords, is_user_input=True)
+                    # Enhanced keyword context update
+                    if user_context["semantic_enabled"]:
+                        enhanced_input_keywords = enhanced_extract_ranked_keywords(
+                            "", translated_input, 
+                            accumulated_keywords=[(k, v["weight"]) for k, v in user_context.get("accumulated_keywords", {}).items()],
+                            use_semantic=True
+                        )
+                    else:
+                        enhanced_input_keywords = extract_ranked_keywords(
+                            "", translated_input, 
+                            accumulated_keywords=[(k, v["weight"]) for k, v in user_context.get("accumulated_keywords", {}).items()]
+                        )
+                    
+                    update_accumulated_keywords(enhanced_input_keywords, user_context, user_input, is_user_input=True)
                                         
                     # Set awaiting confirmation flag
                     user_context["awaiting_confirmation"] = True
                 
             except WebSocketDisconnect:
-                logging.info(f"Websocket disconnected for session {session_id}")
+                logging.info(f"Enhanced websocket disconnected for session {session_id}")
                 session_manager.reset_session(session_id)
                 break
                 
             except Exception as e:
-                logging.error(f"Error processing message: {str(e)}\n{traceback.format_exc()}")
+                logging.error(f"Error processing enhanced message: {str(e)}\n{traceback.format_exc()}")
                 error_message = "I'm sorry, I encountered an error while processing your request. Please try again."
                 if user_language != "en":
                     try:
@@ -3626,12 +5510,11 @@ async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                 await websocket.send_text(f"{session_id}|{error_message}")
                 
     except Exception as e:
-        logging.error(f"Websocket error: {str(e)}\n{traceback.format_exc()}")
+        logging.error(f"Enhanced websocket error: {str(e)}\n{traceback.format_exc()}")
         try:
             await websocket.close()
         except:
             pass
-
 
 # Define a comprehensive list of gender terms in multiple languages
 ALL_GENDER_TERMS = [
@@ -3924,52 +5807,21 @@ def extract_bold_headings_from_ai_response(ai_response):
     
     return unique_headings
 
-def update_accumulated_keywords(keywords, user_context, is_user_input=False, is_ai_response=False):
+def update_accumulated_keywords(keywords, user_context, user_input, is_user_input=False, is_ai_response=False):
     """
-    ENHANCED: Better frequency tracking with category-aware persistence.
+    IMPROVED: Smarter keyword addition that considers current request context
     """
-    from datetime import datetime
-    
-    print(f"\n📝 ENHANCED KEYWORD UPDATE")
-    print("="*40)
-    
     if "accumulated_keywords" not in user_context:
         user_context["accumulated_keywords"] = {}
     
-    # Extract budget separately
-    if is_user_input and user_context.get("current_text_input"):
-        budget_info = extract_budget_from_text(user_context["current_text_input"])
-        if budget_info:
-            user_context["budget_range"] = budget_info
-            print(f"💰 Budget: {budget_info}")
-    
-    # Category-based persistence settings
-    persistence_config = {
-        'clothing_items': {'decay_rate': 0.1, 'max_age_minutes': 120},  # Long persistence
-        'style_attributes': {'decay_rate': 0.15, 'max_age_minutes': 90},
-        'colors': {'decay_rate': 0.2, 'max_age_minutes': 60},
-        'gender_terms': {'decay_rate': 0.05, 'max_age_minutes': 240},  # Very long persistence but low weight
-        'occasions': {'decay_rate': 0.4, 'max_age_minutes': 30},       # Short persistence
-        'default': {'decay_rate': 0.25, 'max_age_minutes': 45}
-    }
-    
-    def get_keyword_category(keyword):
-        """Determine keyword category for persistence settings"""
-        keyword_lower = keyword.lower()
-        
-        categories = {
-            'clothing_items': ['kemeja', 'shirt', 'blouse', 'dress', 'gaun', 'celana', 'pants', 'jacket'],
-            'style_attributes': ['casual', 'formal', 'elegant', 'panjang', 'pendek', 'slim', 'oversized'],
-            'colors': ['white', 'black', 'red', 'blue', 'putih', 'hitam', 'merah', 'biru'],
-            'gender_terms': ['perempuan', 'wanita', 'female', 'woman', 'pria', 'laki-laki', 'male', 'man'],
-            'occasions': ['office', 'kantor', 'party', 'pesta', 'wedding', 'beach']
-        }
-        
-        for category, terms in categories.items():
-            if any(term in keyword_lower for term in terms):
-                return category
-        
-        return 'default'
+    # Extract current request context
+    current_specificity = []
+    if user_input:
+        user_input_lower = user_input.lower()
+        specific_modifiers = [
+            'maxi', 'mini', 'midi', 'cropped', 'oversized', 'slim', 'only', 'just', 'saja', 'panjang', 'pendek'
+        ]
+        current_specificity = [mod for mod in specific_modifiers if mod in user_input_lower]
     
     updates_made = 0
     new_keywords_added = 0
@@ -3979,76 +5831,145 @@ def update_accumulated_keywords(keywords, user_context, is_user_input=False, is_
             continue
         
         keyword_lower = keyword.lower()
-        category = get_keyword_category(keyword)
         
-        # Convert score to frequency estimate
+        # MASSIVE boost for current user input, especially with specificity
         if is_user_input:
-            frequency_boost = 2.0
-            estimated_frequency = max(1, score / 100)  # User scores are higher
+            base_boost = 10.0
+            
+            # Extra boost for specificity terms in current request
+            if any(spec in keyword_lower for spec in current_specificity):
+                specificity_boost = 20.0  # HUGE boost for specific requests
+                print(f"   🎯 SPECIFICITY BOOST: '{keyword}' gets {specificity_boost}x boost")
+            else:
+                specificity_boost = 1.0
+            
+            frequency_boost = base_boost * specificity_boost
+            estimated_frequency = max(1, score / 20)  # More sensitive
         else:
             frequency_boost = 1.0
-            estimated_frequency = max(1, score / 50)   # AI scores are lower
+            estimated_frequency = max(1, score / 100)
         
         if keyword_lower in user_context["accumulated_keywords"]:
             # Update existing keyword
             data = user_context["accumulated_keywords"][keyword_lower]
+            old_weight = get_weight_compatible(data)
             
-            old_frequency = data.get("total_frequency", 1)
-            new_frequency = old_frequency + (estimated_frequency * frequency_boost)
+            # Calculate new values
+            if is_user_input:
+                new_weight = old_weight + (score * frequency_boost)
+                new_count = data.get("count", 1) + frequency_boost
+            else:
+                new_weight = old_weight + score
+                new_count = data.get("count", 1) + 1
             
-            # Category-aware weight calculation
-            config = persistence_config.get(category, persistence_config['default'])
-            base_weight = new_frequency * 30
+            # Apply category-aware boosts
+            if is_user_input:
+                category = get_keyword_category(keyword_lower)
+                if category == 'clothing_items':
+                    new_weight *= 3.0  # Boost clothing items
+                elif any(spec in keyword_lower for spec in current_specificity):
+                    new_weight *= 5.0  # MASSIVE boost for current specificity
             
-            # Apply category multiplier
-            if category == 'gender_terms':
-                base_weight *= 0.5  # Reduce gender weight
-            elif category == 'clothing_items':
-                base_weight *= 1.5  # Boost clothing items
-            elif category == 'occasions':
-                base_weight *= 0.7  # Reduce occasion weight
-            
-            data["weight"] = base_weight
-            data["total_frequency"] = new_frequency
-            data["category"] = category
-            data["mention_count"] = data.get("mention_count", 0) + 1
-            data["last_seen"] = datetime.now().isoformat()
+            # Update with compatible structure
+            user_context["accumulated_keywords"][keyword_lower] = {
+                "weight": new_weight,
+                "total_frequency": new_count,
+                "mention_count": new_count,
+                "count": new_count,
+                "first_seen": data.get("first_seen", datetime.now().isoformat()),
+                "last_seen": datetime.now().isoformat(),
+                "source": "user_input" if is_user_input else "ai_response",
+                "category": get_keyword_category(keyword_lower)
+            }
             
             updates_made += 1
-            print(f"   📈 '{keyword}' ({category}) freq: {old_frequency:.1f} → {new_frequency:.1f}")
+            print(f"   📈 UPDATED '{keyword}' weight: {old_weight:.1f} → {new_weight:.1f}")
             
         else:
             # Add new keyword
-            config = persistence_config.get(category, persistence_config['default'])
             initial_frequency = estimated_frequency * frequency_boost
-            base_weight = initial_frequency * 30
+            base_weight = initial_frequency * 100
             
-            # Apply category multiplier for new keywords too
-            if category == 'gender_terms':
-                base_weight *= 0.5
-            elif category == 'clothing_items':
-                base_weight *= 1.5
-            elif category == 'occasions':
-                base_weight *= 0.7
+            # MASSIVE boost for current user input specificity
+            if is_user_input:
+                category = get_keyword_category(keyword_lower)
+                if category == 'clothing_items':
+                    base_weight *= 5.0
+                elif any(spec in keyword_lower for spec in current_specificity):
+                    base_weight *= 15.0  # HUGE boost for specificity terms
             
+            # Create compatible structure
             user_context["accumulated_keywords"][keyword_lower] = {
                 "weight": base_weight,
                 "total_frequency": initial_frequency,
-                "category": category,
                 "mention_count": 1,
+                "count": 1,
                 "first_seen": datetime.now().isoformat(),
                 "last_seen": datetime.now().isoformat(),
-                "source": "user_input" if is_user_input else "ai_response"
+                "source": "user_input" if is_user_input else "ai_response",
+                "category": get_keyword_category(keyword_lower)
             }
             new_keywords_added += 1
-            print(f"   🆕 '{keyword}' ({category}) initial freq: {initial_frequency:.1f}")
+            print(f"   🆕 ADDED '{keyword}' weight: {base_weight:.1f}")
     
-    # Enhanced cleanup with category awareness
-    category_cleanup(user_context, persistence_config)
+    print(f"   📊 Updates: {updates_made}, New: {new_keywords_added}")
+
+def apply_time_based_decay(user_context):
+    """Apply time-based decay - compatible version"""
+    from datetime import datetime
     
-    print(f"📊 Updates: {updates_made}, New: {new_keywords_added}")
-    print(f"📚 Total: {len(user_context['accumulated_keywords'])}")
-    print("="*40)
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    current_time = datetime.now()
+    decay_applied = 0
+    
+    for keyword, data in user_context["accumulated_keywords"].items():
+        try:
+            if isinstance(data, dict) and "last_seen" in data:
+                last_seen_str = data["last_seen"]
+                last_seen = datetime.fromisoformat(last_seen_str)
+                minutes_old = (current_time - last_seen).total_seconds() / 60
+                
+                # Apply stronger decay based on age
+                if minutes_old > 60:  # Older than 1 hour
+                    decay_factor = max(0.1, 1 - (minutes_old - 60) / 120)
+                    old_weight = get_weight_compatible(data)
+                    new_weight = old_weight * decay_factor
+                    data["weight"] = new_weight
+                    
+                    if old_weight != new_weight:
+                        decay_applied += 1
+            else:
+                # Old structure or missing timestamp - apply mild decay
+                if isinstance(data, dict):
+                    data["weight"] = get_weight_compatible(data) * 0.9
+                decay_applied += 1
+                    
+        except Exception:
+            # If we can't parse the date, apply decay anyway
+            if isinstance(data, dict):
+                data["weight"] = get_weight_compatible(data) * 0.7
+            decay_applied += 1
+    
+    if decay_applied > 0:
+        print(f"⏰ Applied time decay to {decay_applied} keywords")
+
+def get_keyword_category(keyword_lower):
+    """Get the category of a keyword for smart boosting - compatible version"""
+    categories = {
+        'clothing_items': ['kemeja', 'shirt', 'blouse', 'celana', 'pants', 'rok', 'skirt', 'dress', 'gaun'],
+        'style_attributes': ['casual', 'formal', 'elegant', 'vintage', 'modern'],
+        'colors': ['black', 'white', 'red', 'blue', 'hitam', 'putih'],
+        'user_identity': ['female', 'male', 'woman', 'man', 'perempuan'],
+        'occasions': ['office', 'party', 'wedding', 'kantor', 'pesta']
+    }
+    
+    for category, terms in categories.items():
+        if any(term in keyword_lower for term in terms):
+            return category
+    
+    return 'other'
 
 def category_cleanup(user_context, persistence_config):
     """
@@ -4376,79 +6297,393 @@ def get_keyword_category_multiplier(keyword):
     else:
         return 1.0  # Default
 
+def detect_and_handle_category_change_improved(user_input, user_context):
+    """
+    FIXED: More aggressive and accurate category change detection
+    """
+    print(f"\n🔍 AGGRESSIVE CATEGORY CHANGE DETECTION")
+    print("="*60)
+    print(f"📝 User input: '{user_input}'")
+    
+    user_input_lower = user_input.lower()
+    
+    # Define clothing categories - MORE COMPREHENSIVE
+    fashion_categories = {
+        'shirts_tops': ['kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 'sweater', 'hoodie', 'cardigan', 'blazer'],
+        'pants': ['celana', 'pants', 'jeans', 'trousers', 'legging'],
+        'skirts': ['rok', 'skirt'],
+        'dresses': ['dress', 'gaun', 'terusan'],
+        'outerwear': ['jaket', 'jacket', 'coat'],
+        'footwear': ['sepatu', 'shoes', 'sneaker', 'heels', 'boots'],
+        'accessories': ['tas', 'bag', 'topi', 'hat', 'scarf']
+    }
+    
+    # Find current categories in user input
+    current_categories = set()
+    current_terms_found = []
+    
+    for category_name, terms in fashion_categories.items():
+        for term in terms:
+            if term in user_input_lower:
+                current_categories.add(category_name)
+                current_terms_found.append(term)
+    
+    print(f"   🎯 Current categories: {current_categories}")
+    print(f"   📝 Terms found: {current_terms_found}")
+    
+    if not current_categories:
+        print("   ⚠️ No clothing categories detected")
+        return False
+    
+    # Check accumulated keywords for dominant categories
+    accumulated_keywords = user_context.get("accumulated_keywords", {})
+    accumulated_category_weights = {}
+    
+    for keyword, data in accumulated_keywords.items():
+        keyword_lower = keyword.lower()
+        weight = get_weight_compatible(data)
+        
+        for category_name, terms in fashion_categories.items():
+            if any(term in keyword_lower for term in terms):
+                if category_name not in accumulated_category_weights:
+                    accumulated_category_weights[category_name] = 0
+                accumulated_category_weights[category_name] += weight
+                break
+    
+    print(f"   📊 Accumulated category weights:")
+    for cat, weight in sorted(accumulated_category_weights.items(), key=lambda x: x[1], reverse=True):
+        print(f"      {cat}: {weight:.1f}")
+    
+    # AGGRESSIVE CHANGE DETECTION - Lower thresholds
+    dominant_old_categories = set()
+    for category_name, total_weight in accumulated_category_weights.items():
+        # REDUCED threshold from 5000 to 1000
+        if total_weight > 1000 and category_name not in current_categories:
+            dominant_old_categories.add(category_name)
+    
+    print(f"   👑 Dominant old categories: {dominant_old_categories}")
+    
+    # Trigger category change if:
+    change_detected = False
+    change_reason = ""
+    
+    # 1. Different categories with substantial weight difference
+    if dominant_old_categories and current_categories:
+        if not dominant_old_categories.intersection(current_categories):
+            change_detected = True
+            change_reason = "different_categories"
+    
+    # 2. Multiple clothing items mentioned (suggests new search)
+    elif len(current_terms_found) >= 2:
+        change_detected = True
+        change_reason = "multiple_items"
+    
+    # 3. Explicit change indicators
+    change_indicators = ['now', 'sekarang', 'instead', 'ganti', 'different', 'lain', 
+                        'show me', 'tunjukkan', 'carikan', 'find', 'cari']
+    if any(indicator in user_input_lower for indicator in change_indicators):
+        change_detected = True
+        change_reason = "explicit_change"
+    
+    # 4. FORCE change if accumulated weight is very high (> 10000)
+    total_accumulated_weight = sum(accumulated_category_weights.values())
+    if total_accumulated_weight > 10000 and current_categories:
+        change_detected = True
+        change_reason = "weight_reset"
+    
+    print(f"   🔄 Change detected: {change_detected} ({change_reason})")
+    
+    if change_detected:
+        execute_aggressive_category_change(user_context, dominant_old_categories, current_categories, change_reason)
+        return True
+    
+    return False
+
+def execute_aggressive_category_change(user_context, old_categories, new_categories, change_type):
+    """
+    MUCH MORE AGGRESSIVE: Remove almost everything conflicting
+    """
+    print(f"\n🔄 EXECUTING VERY AGGRESSIVE CATEGORY CHANGE")
+    print("="*50)
+    print(f"   📤 Removing categories: {old_categories}")
+    print(f"   📥 Focusing on: {new_categories}")
+    print(f"   🎯 Change type: {change_type}")
+    
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    # Define comprehensive clothing categories
+    fashion_categories = {
+        'shirts_tops': ['kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 'sweater', 'hoodie', 'cardigan', 'blazer', 'tank', 'top'],
+        'pants': ['celana', 'pants', 'jeans', 'trousers', 'legging', 'palazzo'],
+        'skirts': ['rok', 'skirt'],
+        'dresses': ['dress', 'gaun', 'terusan'],
+        'outerwear': ['jaket', 'jacket', 'coat'],
+        'footwear': ['sepatu', 'shoes', 'sneaker', 'heels', 'boots'],
+        'accessories': ['tas', 'bag', 'topi', 'hat', 'scarf']
+    }
+    
+    # Only preserve these critical attributes
+    critical_preserve = {
+        'gender': ['female', 'male', 'woman', 'man', 'perempuan', 'wanita', 'pria'],
+        'colors': ['black', 'white', 'red', 'blue', 'hitam', 'putih', 'merah', 'biru'],
+        'sizes': ['small', 'medium', 'large', 'kecil', 'sedang', 'besar', 'xl', 'xxl'], # Only basic colors
+        'basic_styles': ['casual', 'formal']  # Only basic styles
+    }
+    
+    preserved_keywords = {}
+    removed_count = 0
+    
+    for keyword, data in user_context["accumulated_keywords"].items():
+        keyword_lower = keyword.lower()
+        current_weight = get_weight_compatible(data)
+        should_preserve = False
+        preserve_reason = "removed"
+        new_weight = current_weight
+        
+        # 1. ALWAYS preserve gender (but reduce weight)
+        if any(term in keyword_lower for term in critical_preserve['gender']):
+            should_preserve = True
+            preserve_reason = "gender"
+            new_weight = min(current_weight * 0.2, 500)  # Very low weight
+        
+        # 2. Check if belongs to NEW categories (BOOST heavily)
+        elif new_categories:
+            for new_cat in new_categories:
+                if new_cat in fashion_categories:
+                    if any(term in keyword_lower for term in fashion_categories[new_cat]):
+                        should_preserve = True
+                        preserve_reason = f"new_{new_cat}"
+                        new_weight = current_weight * 5.0  # MASSIVE boost
+                        break
+        
+        # 3. AGGRESSIVELY remove old category keywords
+        if not should_preserve:
+            belongs_to_old = False
+            for old_cat in old_categories:
+                if old_cat in fashion_categories:
+                    if any(term in keyword_lower for term in fashion_categories[old_cat]):
+                        belongs_to_old = True
+                        break
+            
+            # Also remove ANY clothing terms not in new categories
+            if not belongs_to_old:
+                for cat_name, terms in fashion_categories.items():
+                    if cat_name not in new_categories:
+                        if any(term in keyword_lower for term in terms):
+                            belongs_to_old = True
+                            break
+            
+            if belongs_to_old:
+                removed_count += 1
+                print(f"   ❌ REMOVING '{keyword}' (old/conflicting category)")
+                continue
+        
+        # 4. Keep only basic colors and styles (very reduced weight)
+        if not should_preserve:
+            if any(term in keyword_lower for term in critical_preserve['colors']):
+                should_preserve = True
+                preserve_reason = "basic_color"
+                new_weight = min(current_weight * 0.1, 300)
+            elif any(term in keyword_lower for term in critical_preserve['basic_styles']):
+                should_preserve = True
+                preserve_reason = "basic_style"
+                new_weight = min(current_weight * 0.1, 200)
+        
+        # 5. Remove everything else
+        if not should_preserve:
+            removed_count += 1
+            print(f"   ❌ REMOVING '{keyword}' (not essential)")
+            continue
+        
+        # Create preserved keyword entry
+        if isinstance(data, dict):
+            updated_data = data.copy()
+            updated_data["weight"] = new_weight
+        else:
+            updated_data = {
+                "weight": new_weight,
+                "total_frequency": 1,
+                "mention_count": 1,
+                "count": 1,
+                "first_seen": datetime.now().isoformat(),
+                "last_seen": datetime.now().isoformat(),
+                "source": "preserved",
+                "category": preserve_reason
+            }
+        
+        preserved_keywords[keyword] = updated_data
+        
+        if preserve_reason.startswith("new_"):
+            print(f"   🚀 BOOSTING '{keyword}' ({preserve_reason}): {current_weight:.1f} → {new_weight:.1f}")
+        else:
+            print(f"   📉 PRESERVING '{keyword}' ({preserve_reason}): {current_weight:.1f} → {new_weight:.1f}")
+    
+    # Update context with drastically reduced keywords
+    user_context["accumulated_keywords"] = preserved_keywords
+    
+    # Clear product cache
+    user_context["product_cache"] = {
+        "all_results": pd.DataFrame(),
+        "current_page": 0,
+        "products_per_page": 5,
+        "last_search_params": {},
+        "has_more": False
+    }
+    
+    print(f"   📊 VERY AGGRESSIVE SUMMARY:")
+    print(f"      ❌ Removed: {removed_count} keywords")
+    print(f"      ✅ Preserved: {len(preserved_keywords)} essential keywords")
+    print("="*50)
+
+def boost_current_request_keywords_aggressively(user_context, current_user_input):
+    """
+    AGGRESSIVE: Boost keywords that appear in current user input
+    """
+    if not current_user_input or "accumulated_keywords" not in user_context:
+        return
+    
+    print(f"\n🚀 AGGRESSIVE CURRENT REQUEST BOOST")
+    print("="*50)
+    print(f"📝 Boosting keywords from: '{current_user_input}'")
+    
+    user_input_lower = current_user_input.lower()
+    boosted_count = 0
+    
+    # Extract all words from current input
+    input_words = set(user_input_lower.split())
+    
+    for keyword, data in user_context["accumulated_keywords"].items():
+        keyword_lower = keyword.lower()
+        
+        # Check if keyword appears in current input (exact match or contains)
+        keyword_in_input = (
+            keyword_lower in user_input_lower or
+            any(word in keyword_lower for word in input_words if len(word) > 2)
+        )
+        
+        if keyword_in_input:
+            current_weight = get_weight_compatible(data)
+            
+            # Determine boost factor based on keyword type
+            current_clothing_terms = ['celana', 'pants', 'rok', 'skirt']  # Only current request items
+            style_terms = ['casual', 'formal', 'elegant']
+
+            if any(clothing in keyword_lower for clothing in current_clothing_terms):
+                boost_factor = 20.0  # MASSIVE boost for current clothing items
+            elif any(style in keyword_lower for style in style_terms):
+                boost_factor = 1.5   # REDUCED boost for styles
+            else:
+                boost_factor = 2.0   # REDUCED boost for other terms
+
+            new_weight = current_weight * boost_factor
+
+            # ADDITIONAL: Equalize Indonesian vs English terms
+            if keyword_lower in ['celana', 'rok']:
+                new_weight = max(new_weight, 300000)  # Ensure Indonesian terms get high weight
+            elif keyword_lower in ['pants', 'skirt']:
+                new_weight = max(new_weight, 250000)  # Ensure English terms get high weight too
+            
+            # Update weight
+            if isinstance(data, dict):
+                data["weight"] = new_weight
+            
+            print(f"   🚀 BOOSTED '{keyword}': {current_weight:.1f} → {new_weight:.1f} (×{boost_factor})")
+            boosted_count += 1
+    
+    print(f"🚀 Applied aggressive boost to {boosted_count} current request keywords")
+    print("="*50)
+
 def detect_fashion_category_change(user_input, user_context):
     """
-    Enhanced fashion category change detection that works with the cleanup system.
-    Returns True if user is asking for a different fashion item category.
+    COMPATIBLE VERSION: Works with your existing accumulated_keywords structure
     """
     user_input_lower = user_input.lower()
     
-    # Fashion categories (same as in cleanup function for consistency)
+    # Define major fashion categories
     fashion_categories = {
-        'tops': ['kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 'sweater', 'hoodie'],
-        'bottoms': ['celana', 'pants', 'rok', 'skirt', 'jeans'],
-        'dresses': ['dress', 'gaun', 'terusan'],
-        'outerwear': ['jaket', 'jacket', 'blazer', 'coat', 'mantel'],
-        'shoes': ['sepatu', 'shoes', 'heels', 'sneaker', 'boots'],
-        'bags': ['tas', 'bag', 'handbag', 'backpack'],
-        'occasions': ['office', 'kantor', 'party', 'pesta', 'wedding', 'pernikahan', 'beach', 'pantai', 'sport', 'olahraga'],
-        'styles': ['casual', 'formal', 'elegant', 'vintage', 'modern', 'minimalist', 'bohemian']
+        'tops': [
+            'kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 
+            'sweater', 'hoodie', 'cardigan', 'blazer', 'jacket', 'jaket', 'top'
+        ],
+        'bottoms': [
+            'celana', 'pants', 'jeans', 'rok', 'skirt', 'bawahan', 'bottom',
+            'shorts', 'legging', 'trousers'
+        ],
+        'dresses': [
+            'dress', 'gaun', 'terusan', 'overall'
+        ],
+        'footwear': [
+            'sepatu', 'shoes', 'sneaker', 'heels', 'sandal', 'boots', 'flat'
+        ],
+        'accessories': [
+            'tas', 'bag', 'handbag', 'clutch', 'backpack', 'topi', 'hat'
+        ]
     }
     
     # Find current category in user input
-    current_category = None
-    current_terms = []
+    current_categories = set()
+    current_terms_found = []
+    
     for category, terms in fashion_categories.items():
         found_terms = [term for term in terms if term in user_input_lower]
         if found_terms:
-            current_category = category
-            current_terms = found_terms
-            break
+            current_categories.add(category)
+            current_terms_found.extend(found_terms)
     
-    # Find previous category in accumulated keywords (use actual accumulated keywords)
-    previous_categories = set()
+    # Find dominant category in accumulated keywords - COMPATIBLE VERSION
+    accumulated_categories = {}
     accumulated_keywords = user_context.get("accumulated_keywords", {})
     
     for keyword, data in accumulated_keywords.items():
         keyword_lower = keyword.lower()
+        weight = get_weight_compatible(data)  # Handle both old and new structures
+        
         for category, terms in fashion_categories.items():
             if any(term in keyword_lower for term in terms):
-                previous_categories.add(category)
+                if category not in accumulated_categories:
+                    accumulated_categories[category] = 0
+                accumulated_categories[category] += weight
                 break
     
-    print(f"🔍 CHANGE DETECTION:")
-    print(f"   📝 Current input category: {current_category} (terms: {current_terms})")
-    print(f"   📚 Previous categories in context: {previous_categories}")
+    # Find the dominant category from accumulated keywords
+    dominant_old_category = None
+    if accumulated_categories:
+        dominant_old_category = max(accumulated_categories.items(), key=lambda x: x[1])[0]
+        dominant_weight = accumulated_categories[dominant_old_category]
+        
+        # Only consider it dominant if it has significant weight
+        if dominant_weight < 1000:
+            dominant_old_category = None
     
-    # Special handling for occasion changes (less disruptive)
-    if current_category == 'occasions' and any(cat in ['tops', 'bottoms', 'dresses', 'outerwear'] for cat in previous_categories):
-        print(f"🎪 OCCASION CHANGE: {previous_categories} → {current_category} (minor reset)")
-        return False  # Don't reset everything for occasion changes
+    print(f"\n🔍 COMPATIBLE CATEGORY CHANGE DETECTION:")
+    print(f"   📝 Current input categories: {current_categories}")
+    print(f"   📝 Terms found: {current_terms_found}")
+    print(f"   📚 Accumulated categories: {accumulated_categories}")
+    print(f"   👑 Dominant old category: {dominant_old_category}")
     
-    # Check if categories are different (major changes only)
-    if current_category and previous_categories and current_category not in previous_categories:
-        # Don't reset for style-only changes
-        if current_category == 'styles' or 'styles' in previous_categories:
-            print(f"🎨 STYLE CHANGE: {previous_categories} → {current_category} (keeping keywords)")
-            return False
+    # Detect major category change
+    if current_categories and dominant_old_category:
+        # Check if user is asking for completely different category
+        if not current_categories.intersection({dominant_old_category}):
+            # Additional checks for explicit change indicators
+            change_indicators = [
+                'now', 'sekarang', 'instead', 'ganti', 'bukan', 'not',
+                'different', 'lain', 'berbeda', 'other', 'selain',
+                'want', 'mau', 'need', 'butuh', 'looking for', 'cari'
+            ]
             
-        # Check for explicit change indicators
-        change_indicators = [
-            'instead', 'not that', 'forget about', 'different', 'rather',
-            'ganti', 'bukan itu', 'lupakan', 'berbeda', 'lebih suka',
-            'now show', 'sekarang', 'now i want', 'i want different'
-        ]
-        
-        has_explicit_change = any(indicator in user_input_lower for indicator in change_indicators)
-        
-        if has_explicit_change or len(previous_categories) == 1:
-            print(f"🔄 MAJOR CATEGORY CHANGE: {previous_categories} → {current_category}")
-            return True
-        else:
-            print(f"🤔 POSSIBLE CATEGORY ADDITION: {previous_categories} + {current_category} (not resetting)")
-            return False
+            has_change_indicator = any(indicator in user_input_lower for indicator in change_indicators)
+            
+            print(f"   🔄 Different categories detected: {dominant_old_category} → {current_categories}")
+            print(f"   🗣️ Has change indicator: {has_change_indicator}")
+            
+            # Trigger reset if categories are different OR explicit change indicators
+            if has_change_indicator or len(current_terms_found) >= 2:
+                print(f"   ✅ MAJOR CATEGORY CHANGE CONFIRMED!")
+                return True, dominant_old_category, current_categories
     
-    return False
+    return False, None, current_categories
 
 def detect_occasion_change(user_input, accumulated_keywords):
     """
@@ -4487,6 +6722,218 @@ def detect_occasion_change(user_input, accumulated_keywords):
         return True
     
     return False
+
+def detect_specificity_change(user_input, user_context):
+    """
+    Detect when user is asking for something more specific or different within the same category
+    """
+    print(f"\n🔍 SPECIFICITY CHANGE DETECTION")
+    print("="*50)
+    print(f"📝 User input: '{user_input}'")
+    
+    user_input_lower = user_input.lower()
+    
+    # Define specific product modifiers that indicate a refinement request
+    specificity_indicators = {
+        'style_modifiers': [
+            'maxi', 'mini', 'midi', 'cropped', 'oversized', 'slim', 'wide leg', 
+            'high waist', 'low waist', 'off shoulder', 'long sleeve', 'short sleeve',
+            'button up', 'wrap', 'pleated', 'a-line', 'pencil', 'flare', 'straight',
+            'tiered', 'asymmetrical', 'halter', 'strapless', 'backless'
+        ],
+        'specific_requests': [
+            'just', 'only', 'saja', 'hanya', 'specifically', 'khusus',
+            'show me only', 'tunjukkan hanya', 'carikan yang', 'find only'
+        ],
+        'pattern_modifiers': [
+            'batik', 'floral', 'striped', 'polka dot', 'plaid', 'solid',
+            'geometric', 'abstract', 'paisley', 'leopard', 'zebra'
+        ],
+        'material_modifiers': [
+            'cotton', 'silk', 'denim', 'leather', 'chiffon', 'satin',
+            'wool', 'linen', 'polyester', 'velvet'
+        ]
+    }
+    
+    # Check if user input contains specificity indicators
+    specificity_found = []
+    for category, indicators in specificity_indicators.items():
+        found_indicators = [ind for ind in indicators if ind in user_input_lower]
+        if found_indicators:
+            specificity_found.extend([(category, ind) for ind in found_indicators])
+    
+    print(f"   🎯 Specificity indicators found: {specificity_found}")
+    
+    # Check accumulated keywords for conflicting specificity
+    accumulated_keywords = user_context.get("accumulated_keywords", {})
+    conflicting_specificity = []
+    
+    for keyword, data in accumulated_keywords.items():
+        keyword_lower = keyword.lower()
+        weight = get_weight_compatible(data)
+        
+        # Skip low weight keywords
+        if weight < 1000:
+            continue
+            
+        # Check for conflicting modifiers
+        for category, current_indicator in specificity_found:
+            if category == 'style_modifiers':
+                # Find conflicting style modifiers
+                for other_modifier in specificity_indicators['style_modifiers']:
+                    if (other_modifier != current_indicator and 
+                        other_modifier in keyword_lower and
+                        weight > 5000):  # High weight conflicting modifier
+                        conflicting_specificity.append((keyword, other_modifier, weight))
+    
+    print(f"   ⚠️ Conflicting specificity: {conflicting_specificity}")
+    
+    # Determine if we should reset for specificity
+    should_reset = False
+    reset_reason = ""
+    
+    # Reset if we have specific requests with conflicting modifiers
+    if specificity_found and conflicting_specificity:
+        should_reset = True
+        reset_reason = "conflicting_specificity"
+    
+    # Reset if user explicitly asks for "only" or "just" something
+    elif any('specific_requests' == cat for cat, _ in specificity_found):
+        should_reset = True
+        reset_reason = "explicit_only_request"
+    
+    # Reset if user mentions multiple specific modifiers (new focused search)
+    elif len([cat for cat, _ in specificity_found if cat == 'style_modifiers']) >= 2:
+        should_reset = True
+        reset_reason = "multiple_modifiers"
+    
+    print(f"   🔄 Should reset: {should_reset} ({reset_reason})")
+    print("="*50)
+    
+    return should_reset, reset_reason, specificity_found, conflicting_specificity
+
+def execute_specificity_reset(user_context, reset_reason, specificity_found, conflicting_specificity):
+    """
+    Reset keywords while preserving essential info but removing conflicting specificity
+    """
+    print(f"\n🔄 EXECUTING SPECIFICITY RESET")
+    print("="*50)
+    print(f"   🎯 Reason: {reset_reason}")
+    print(f"   📝 New specificity: {specificity_found}")
+    print(f"   ⚠️ Conflicts: {conflicting_specificity}")
+    
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    # Always preserve these critical attributes
+    always_preserve = {
+        'gender': ['female', 'male', 'woman', 'man', 'perempuan', 'wanita', 'pria'],
+        'basic_colors': ['black', 'white', 'hitam', 'putih'],  # Only most basic colors
+        'budget_related': ['budget', 'price', 'harga']  # Keep budget context
+    }
+    
+    # Get conflicting keywords to remove
+    conflicting_keywords = set()
+    for keyword, modifier, weight in conflicting_specificity:
+        conflicting_keywords.add(keyword.lower())
+    
+    # Also remove broad category terms that might interfere
+    broad_terms_to_reduce = [
+        'atasan', 'kemeja', 'wanita', 'tops', 'shirt', 'blouse'  # These interfere with skirt searches
+    ]
+    
+    preserved_keywords = {}
+    removed_count = 0
+    reduced_count = 0
+    
+    for keyword, data in user_context["accumulated_keywords"].items():
+        keyword_lower = keyword.lower()
+        current_weight = get_weight_compatible(data)
+        should_preserve = False
+        preserve_reason = "removed"
+        new_weight = current_weight
+        
+        # 1. ALWAYS preserve gender (but reduce weight)
+        if any(term in keyword_lower for term in always_preserve['gender']):
+            should_preserve = True
+            preserve_reason = "gender"
+            new_weight = min(current_weight * 0.1, 100)  # Very low weight
+        
+        # 2. Remove conflicting specificity keywords
+        elif keyword_lower in conflicting_keywords:
+            removed_count += 1
+            print(f"   ❌ REMOVING conflicting: '{keyword}' (weight: {current_weight:.1f})")
+            continue
+        
+        # 3. Heavily reduce broad category terms that interfere
+        elif any(broad in keyword_lower for broad in broad_terms_to_reduce):
+            if current_weight > 1000:  # Only if they have significant weight
+                should_preserve = True
+                preserve_reason = "reduced_broad"
+                new_weight = min(current_weight * 0.05, 50)  # Massive reduction
+                reduced_count += 1
+                print(f"   📉 HEAVILY REDUCING broad term: '{keyword}' {current_weight:.1f} → {new_weight:.1f}")
+            else:
+                removed_count += 1
+                print(f"   ❌ REMOVING low-weight broad: '{keyword}'")
+                continue
+        
+        # 4. Keep basic colors but reduce weight
+        elif any(color in keyword_lower for color in always_preserve['basic_colors']):
+            should_preserve = True
+            preserve_reason = "basic_color"
+            new_weight = min(current_weight * 0.2, 200)
+        
+        # 5. Keep only very high weight keywords with significant reduction
+        elif current_weight > 10000:
+            should_preserve = True
+            preserve_reason = "high_weight_reduced"
+            new_weight = current_weight * 0.1  # 90% reduction
+            reduced_count += 1
+            print(f"   📉 REDUCING high weight: '{keyword}' {current_weight:.1f} → {new_weight:.1f}")
+        
+        # 6. Remove everything else
+        else:
+            removed_count += 1
+            print(f"   ❌ REMOVING: '{keyword}' (weight: {current_weight:.1f})")
+            continue
+        
+        # Create preserved keyword entry
+        if isinstance(data, dict):
+            updated_data = data.copy()
+            updated_data["weight"] = new_weight
+            updated_data["last_seen"] = datetime.now().isoformat()
+        else:
+            updated_data = {
+                "weight": new_weight,
+                "total_frequency": 1,
+                "mention_count": 1,
+                "count": 1,
+                "first_seen": datetime.now().isoformat(),
+                "last_seen": datetime.now().isoformat(),
+                "source": "preserved_specificity",
+                "category": preserve_reason
+            }
+        
+        preserved_keywords[keyword] = updated_data
+    
+    # Update context with cleaned keywords
+    user_context["accumulated_keywords"] = preserved_keywords
+    
+    # Clear product cache to force new search
+    user_context["product_cache"] = {
+        "all_results": pd.DataFrame(),
+        "current_page": 0,
+        "products_per_page": 5,
+        "last_search_params": {},
+        "has_more": False
+    }
+    
+    print(f"   📊 SPECIFICITY RESET SUMMARY:")
+    print(f"      ❌ Removed: {removed_count} keywords")
+    print(f"      📉 Reduced: {reduced_count} keywords")
+    print(f"      ✅ Preserved: {len(preserved_keywords)} essential keywords")
+    print("="*50)
 
 def apply_keyword_decay(user_context):
     """Apply decay to persistent keywords, especially occasions"""
@@ -4566,6 +7013,131 @@ def detect_major_context_switch_in_update(user_input, user_context):
             return True
     
     return False
+
+def smart_keyword_reset_for_category_change(user_context, old_category, new_categories):
+    """
+    COMPATIBLE VERSION: Smart reset that works with your existing data structure
+    """
+    print(f"\n🔄 COMPATIBLE SMART KEYWORD RESET")
+    print(f"   📤 Removing: {old_category}")
+    print(f"   📥 Keeping for: {new_categories}")
+    
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    # Categories to preserve (non-conflicting)
+    preserve_categories = {
+        'style_attributes': ['casual', 'formal', 'elegant', 'vintage', 'modern', 'minimalist'],
+        'colors': ['black', 'white', 'red', 'blue', 'green', 'hitam', 'putih', 'merah', 'biru'],
+        'user_identity': ['female', 'male', 'woman', 'man', 'perempuan', 'pria', 'wanita'],
+        'size_preferences': ['small', 'medium', 'large', 'kecil', 'sedang', 'besar'],
+        'fit_preferences': ['slim', 'loose', 'oversized', 'ketat', 'longgar']
+    }
+    
+    # Fashion categories that conflict with each other
+    conflicting_categories = {
+        'tops': ['kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 'sweater', 'hoodie'],
+        'bottoms': ['celana', 'pants', 'jeans', 'rok', 'skirt', 'bawahan'],
+        'dresses': ['dress', 'gaun', 'terusan'],
+        'footwear': ['sepatu', 'shoes', 'sneaker', 'heels', 'sandal'],
+        'accessories': ['tas', 'bag', 'handbag', 'topi', 'hat']
+    }
+    
+    preserved_keywords = {}
+    removed_keywords = []
+    
+    for keyword, data in user_context["accumulated_keywords"].items():
+        keyword_lower = keyword.lower()
+        should_preserve = False
+        preserve_reason = None
+        
+        # Get current weight in compatible way
+        current_weight = get_weight_compatible(data)
+        
+        # Check if it's a non-conflicting attribute we should preserve
+        for preserve_cat, terms in preserve_categories.items():
+            if any(term in keyword_lower for term in terms):
+                should_preserve = True
+                preserve_reason = preserve_cat
+                # Reduce weight but keep it
+                new_weight = current_weight * 0.3
+                break
+        
+        # Check if it belongs to the old conflicting category (remove it)
+        if not should_preserve:
+            belongs_to_old_category = False
+            if old_category and old_category in conflicting_categories:
+                old_terms = conflicting_categories[old_category]
+                if any(term in keyword_lower for term in old_terms):
+                    belongs_to_old_category = True
+            
+            if belongs_to_old_category:
+                removed_keywords.append(keyword)
+                print(f"   ❌ Removing '{keyword}' (old {old_category})")
+            else:
+                # Keep other keywords but reduce their weight
+                should_preserve = True
+                preserve_reason = "non_conflicting"
+                new_weight = current_weight * 0.5
+        
+        if should_preserve:
+            # Create compatible data structure
+            if isinstance(data, dict):
+                # Update existing dict structure
+                updated_data = data.copy()
+                updated_data["weight"] = new_weight
+                # Ensure all required fields exist
+                if "count" not in updated_data:
+                    updated_data["count"] = updated_data.get("mention_count", updated_data.get("total_frequency", 1))
+                if "total_frequency" not in updated_data:
+                    updated_data["total_frequency"] = updated_data.get("count", 1)
+                if "mention_count" not in updated_data:
+                    updated_data["mention_count"] = updated_data.get("count", 1)
+                preserved_keywords[keyword] = updated_data
+            else:
+                # Create new dict structure from old simple weight
+                preserved_keywords[keyword] = {
+                    "weight": new_weight,
+                    "total_frequency": 1,
+                    "mention_count": 1,
+                    "count": 1,
+                    "first_seen": datetime.now().isoformat(),
+                    "last_seen": datetime.now().isoformat(),
+                    "source": "preserved",
+                    "category": get_keyword_category(keyword_lower)
+                }
+            
+            print(f"   ✅ Preserving '{keyword}' ({preserve_reason}) weight: {new_weight:.1f}")
+    
+    # Update the context
+    user_context["accumulated_keywords"] = preserved_keywords
+    
+    # Reset product cache
+    user_context["product_cache"] = {
+        "all_results": pd.DataFrame(),
+        "current_page": 0,
+        "products_per_page": 5,
+        "last_search_params": {},
+        "has_more": False
+    }
+    
+    print(f"   📊 Removed {len(removed_keywords)} conflicting keywords")
+    print(f"   📊 Preserved {len(preserved_keywords)} compatible keywords")
+
+def get_weight_compatible(data):
+    """Extract weight from data in a compatible way"""
+    if isinstance(data, dict):
+        return data.get("weight", 0)
+    else:
+        # Old structure - assume it's just the weight
+        return float(data) if data else 0
+
+def get_source_compatible(data):
+    """Extract source from data in a compatible way"""
+    if isinstance(data, dict):
+        return data.get("source", "unknown")
+    else:
+        return "legacy"
 
 def reset_accumulated_keywords_in_update(user_context, reason):
     """
@@ -4698,28 +7270,51 @@ def print_keyword_summary(user_context):
     
 def detect_and_update_gender(user_input, user_context, force_update=False):
     """
-    Detect gender from user input and update context.
-    Only updates if no gender exists or if force_update=True.
+    IMPROVED: More aggressive and accurate gender detection that handles changes
     """
+    print(f"\n👤 IMPROVED GENDER DETECTION")
+    print("="*50)
+    print(f"📝 Input: '{user_input}'")
+    print(f"🔄 Force update: {force_update}")
+    
     current_gender = user_context.get("user_gender", {})
     has_existing_gender = current_gender.get("category") is not None
     
-    # Don't detect if we already have gender (unless forced)
-    if has_existing_gender and not force_update:
-        print(f"👤 Using existing gender: {current_gender['category']} (confidence: {current_gender.get('confidence', 0):.1f})")
-        return current_gender["category"]
+    print(f"📊 Current gender: {current_gender.get('category', 'None')} (confidence: {current_gender.get('confidence', 0):.1f})")
     
-    # Gender detection patterns
+    # Enhanced gender detection patterns with context
     gender_patterns = {
         'male': [
-            r'\b(pria|laki-laki|male|man|cowok|cowo)\b',
-            r'\buntuk\s+(pria|laki-laki|male|man|cowok)\b',
-            r'\b(saya|i am|i\'m)\s+(pria|laki-laki|male|man)\b'
+            # Direct statements
+            r'\b(i am|i\'m|saya|aku)\s+(a\s+)?(male|man|pria|laki-laki|cowok|cowo)\b',
+            r'\b(male|man|pria|laki-laki|cowok|cowo)\s+(here|di sini|nih)\b',
+            r'\b(as a|sebagai)\s+(male|man|pria|laki-laki)\b',
+            
+            # Context-based
+            r'\b(for|untuk)\s+(me|saya|aku),?\s+(a\s+)?(male|man|pria|laki-laki)\b',
+            r'\b(i am looking|saya mencari)\s+(for|untuk)?\s+(male|man|pria|laki-laki)\s+(clothing|fashion|style)\b',
+            r'\b(male|man|pria|laki-laki)\s+(fashion|style|clothing|clothes|outfit)\b',
+            
+            # Change statements
+            r'\b(actually|sebenarnya|correction|koreksi)\s+.*(male|man|pria|laki-laki)\b',
+            r'\b(change|ganti|ubah)\s+.*(male|man|pria|laki-laki)\b',
+            r'\b(not|bukan)\s+(female|woman|perempuan|wanita).*(male|man|pria|laki-laki)\b',
         ],
         'female': [
-            r'\b(perempuan|wanita|female|woman|cewek|cewe)\b',
-            r'\buntuk\s+(perempuan|wanita|female|woman|cewek)\b',
-            r'\b(saya|i am|i\'m)\s+(perempuan|wanita|female|woman)\b'
+            # Direct statements
+            r'\b(i am|i\'m|saya|aku)\s+(a\s+)?(female|woman|perempuan|wanita|cewek|cewe)\b',
+            r'\b(female|woman|perempuan|wanita|cewek|cewe)\s+(here|di sini|nih)\b',
+            r'\b(as a|sebagai)\s+(female|woman|perempuan|wanita)\b',
+            
+            # Context-based
+            r'\b(for|untuk)\s+(me|saya|aku),?\s+(a\s+)?(female|woman|perempuan|wanita)\b',
+            r'\b(i am looking|saya mencari)\s+(for|untuk)?\s+(female|woman|perempuan|wanita)\s+(clothing|fashion|style)\b',
+            r'\b(female|woman|perempuan|wanita)\s+(fashion|style|clothing|clothes|outfit)\b',
+            
+            # Change statements
+            r'\b(actually|sebenarnya|correction|koreksi)\s+.*(female|woman|perempuan|wanita)\b',
+            r'\b(change|ganti|ubah)\s+.*(female|woman|perempuan|wanita)\b',
+            r'\b(not|bukan)\s+(male|man|pria|laki-laki).*(female|woman|perempuan|wanita)\b',
         ]
     }
     
@@ -4727,60 +7322,213 @@ def detect_and_update_gender(user_input, user_context, force_update=False):
     detected_gender = None
     detected_term = None
     confidence = 0
+    detection_type = "none"
     
-    # Check for gender patterns
+    # Check for explicit change requests first (highest priority)
+    change_patterns = [
+        r'\b(actually|sebenarnya|wait|tunggu|correction|koreksi|ralat)\b',
+        r'\b(change|ganti|ubah)\s+(to|ke|menjadi)\b',
+        r'\b(i\'m|saya)\s+(not|bukan)\b',
+        r'\b(wrong|salah|mistake|kesalahan)\b'
+    ]
+    
+    has_change_indicator = any(re.search(pattern, user_input_lower) for pattern in change_patterns)
+    
+    if has_change_indicator:
+        force_update = True
+        detection_type = "explicit_change"
+        print(f"🔄 Change indicator detected - forcing update")
+    
+    # Check for gender patterns with context awareness
     for gender, patterns in gender_patterns.items():
-        for pattern in patterns:
+        for i, pattern in enumerate(patterns):
             match = re.search(pattern, user_input_lower)
             if match:
                 detected_gender = gender
-                detected_term = match.group(1) if match.lastindex else match.group(0)
-                confidence = 10.0  # High confidence for direct detection
+                detected_term = match.group()
+                
+                # Assign confidence based on pattern type
+                if i < 3:  # Direct statements (highest confidence)
+                    confidence = 15.0
+                elif i < 6:  # Context-based (high confidence)
+                    confidence = 12.0
+                else:  # Change statements (very high confidence)
+                    confidence = 20.0
+                    force_update = True
+                
+                detection_type = f"pattern_{i}"
+                print(f"   ✅ Detected: {gender} (pattern: {pattern})")
+                print(f"   📏 Confidence: {confidence} ({detection_type})")
                 break
         if detected_gender:
             break
     
-    # Update gender if detected
-    if detected_gender:
+    # Additional check for gender keywords with high frequency
+    if not detected_gender:
+        gender_keywords = {
+            'male': ['pria', 'laki-laki', 'male', 'man', 'cowok', 'cowo'],
+            'female': ['perempuan', 'wanita', 'female', 'woman', 'cewek', 'cewe']
+        }
+        
+        for gender, keywords in gender_keywords.items():
+            keyword_count = sum(1 for keyword in keywords if keyword in user_input_lower)
+            if keyword_count > 0:
+                detected_gender = gender
+                detected_term = next(keyword for keyword in keywords if keyword in user_input_lower)
+                confidence = 8.0 + (keyword_count * 2.0)  # Base confidence + frequency boost
+                detection_type = "keyword_frequency"
+                print(f"   🔍 Keyword detection: {gender} (count: {keyword_count})")
+                break
+    
+    # Decision logic for updating gender
+    should_update = False
+    update_reason = ""
+    
+    if not has_existing_gender and detected_gender:
+        should_update = True
+        update_reason = "first_time_detection"
+    elif force_update and detected_gender:
+        should_update = True
+        update_reason = "forced_update"
+    elif detected_gender and confidence > current_gender.get("confidence", 0):
+        should_update = True
+        update_reason = "higher_confidence"
+    elif has_change_indicator and detected_gender:
+        should_update = True
+        update_reason = "explicit_change_request"
+    
+    print(f"📊 Detection summary:")
+    print(f"   🎯 Detected: {detected_gender or 'None'}")
+    print(f"   📏 Confidence: {confidence}")
+    print(f"   🔄 Should update: {should_update} ({update_reason})")
+    
+    # Update gender if conditions are met
+    if should_update and detected_gender:
+        old_gender = current_gender.get("category", "None")
+        
         user_context["user_gender"] = {
             "category": detected_gender,
             "term": detected_term,
             "confidence": confidence,
-            "last_updated": datetime.now().isoformat()
+            "last_updated": datetime.now().isoformat(),
+            "detection_type": detection_type,
+            "update_reason": update_reason
         }
-        print(f"👤 Gender detected and saved: {detected_gender} (term: {detected_term}, confidence: {confidence})")
+        
+        print(f"   ✅ GENDER UPDATED: {old_gender} → {detected_gender}")
+        print(f"   📝 Term: '{detected_term}' (confidence: {confidence})")
+        
+        # Clear product cache when gender changes to force new search
+        if old_gender != "None" and old_gender != detected_gender:
+            user_context["product_cache"] = {
+                "all_results": pd.DataFrame(),
+                "current_page": 0,
+                "products_per_page": 5,
+                "has_more": False
+            }
+            print(f"   🗑️ Cleared product cache due to gender change")
+        
+        print("="*50)
         return detected_gender
     
-    # Return existing gender if available
+    # Return existing gender if no update needed
     if has_existing_gender:
-        print(f"👤 No new gender detected, using existing: {current_gender['category']}")
-        return current_gender["category"]
+        existing_gender = current_gender["category"]
+        print(f"   📋 Using existing gender: {existing_gender}")
+        print("="*50)
+        return existing_gender
     
-    print("👤 No gender detected")
+    print(f"   ❌ No gender detected or updated")
+    print("="*50)
     return None
 
 def get_user_gender(user_context):
     """
-    Safely get user gender information from context.
+    IMPROVED: Better gender information retrieval with validation
     """
     gender_info = user_context.get("user_gender", {})
     
+    # Validate gender data
+    category = gender_info.get("category")
+    if category not in ["male", "female"]:
+        return {
+            "category": None,
+            "term": None,
+            "confidence": 0,
+            "last_updated": None,
+            "is_valid": False
+        }
+    
     return {
-        "category": gender_info.get("category"),
+        "category": category,
         "term": gender_info.get("term"),
         "confidence": gender_info.get("confidence", 0),
-        "last_updated": gender_info.get("last_updated")
+        "last_updated": gender_info.get("last_updated"),
+        "detection_type": gender_info.get("detection_type", "unknown"),
+        "update_reason": gender_info.get("update_reason", "unknown"),
+        "is_valid": True
     }
+
+def handle_gender_in_keyword_update(user_input, user_context):
+    """
+    Handle gender detection during keyword updates
+    """
+    # Check if this is a gender change request
+    is_gender_change = detect_gender_change_request(user_input)
+    
+    # Detect and update gender
+    detected_gender = detect_and_update_gender(
+        user_input, 
+        user_context, 
+        force_update=is_gender_change
+    )
+    
+    # If gender was updated, add it to accumulated keywords with appropriate weight
+    if detected_gender and "accumulated_keywords" in user_context:
+        gender_terms = {
+            'male': ['male', 'man', 'pria', 'laki-laki'],
+            'female': ['female', 'woman', 'perempuan', 'wanita']
+        }
+        
+        # Add gender terms to keywords with moderate weight (not too high to dominate)
+        for term in gender_terms[detected_gender]:
+            user_context["accumulated_keywords"][term] = {
+                "weight": 500.0,  # Moderate weight - enough to filter but not dominate
+                "total_frequency": 1,
+                "mention_count": 1,
+                "count": 1,
+                "first_seen": datetime.now().isoformat(),
+                "last_seen": datetime.now().isoformat(),
+                "source": "gender_detection",
+                "category": "gender_terms"
+            }
+    
+    return detected_gender
 
 def detect_gender_change_request(user_input):
     """
-    Detect if user is explicitly trying to change their gender.
+    IMPROVED: Better detection of explicit gender change requests
     """
     change_patterns = [
-        r'\b(actually|sebenarnya)\s+(i am|saya)\s+(male|female|pria|wanita)',
-        r'\b(change|ganti|ubah)\s+(to|ke|menjadi)\s+(male|female|pria|wanita)',
-        r'\b(i\'m|saya)\s+(not|bukan)\s+(male|female|pria|wanita)',
-        r'\b(correction|koreksi|ralat)',
+        # Explicit corrections
+        r'\b(actually|sebenarnya)\s+(i am|saya|i\'m)\s+(male|female|pria|wanita|perempuan|laki-laki)',
+        r'\b(correction|koreksi|ralat)\s*[:-]?\s*(i am|saya|i\'m)\s+(male|female|pria|wanita|perempuan|laki-laki)',
+        
+        # Gender switches
+        r'\b(change|ganti|ubah)\s+(to|ke|menjadi)\s+(male|female|pria|wanita|perempuan|laki-laki)',
+        r'\b(switch|alih)\s+(to|ke)\s+(male|female|pria|wanita|perempuan|laki-laki)',
+        
+        # Negation corrections
+        r'\b(i\'m|saya)\s+(not|bukan)\s+(male|female|pria|wanita|perempuan|laki-laki)',
+        r'\b(not|bukan)\s+(male|female|pria|wanita|perempuan|laki-laki).*(i am|saya)',
+        
+        # Mistake corrections
+        r'\b(wrong|salah|mistake|kesalahan)',
+        r'\b(that\'s wrong|itu salah)',
+        
+        # Context switches
+        r'\b(for|untuk)\s+(male|female|pria|wanita|perempuan|laki-laki)\s+(now|sekarang)',
+        r'\b(show|tunjukkan)\s+(male|female|pria|wanita|perempuan|laki-laki)\s+(fashion|clothes|style)',
     ]
     
     user_input_lower = user_input.lower()
