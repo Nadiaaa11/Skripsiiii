@@ -42,36 +42,6 @@ import spacy
 import cloudinary
 import cloudinary.uploader
 import logging
-import numpy as np
-import pandas as pd
-from datetime import datetime
-from typing import List, Dict, Tuple, Optional, Any
-import pickle
-import os
-import hashlib
-from datetime import datetime, timedelta
-import numpy as np
-import json
-import atexit
-from contextlib import asynccontextmanager
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-
-try:
-    from sentence_transformers import SentenceTransformer, util
-    SENTENCE_TRANSFORMERS_AVAILABLE = True
-    print("✅ Sentence Transformers available")
-except ImportError:
-    SENTENCE_TRANSFORMERS_AVAILABLE = False
-    print("⚠️ Sentence Transformers not available. Install with: pip install sentence-transformers")
-
-try:
-    from sklearn.metrics.pairwise import cosine_similarity
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    SKLEARN_AVAILABLE = True
-except ImportError:
-    SKLEARN_AVAILABLE = False
-    print("⚠️ Scikit-learn not available. Install with: pip install scikit-learn")
 
 openai = OpenAI(
     api_key="sk-V4UGt-FNIde85D7t0zrvZbVG5eolZDsE8awXTAuJYgT3BlbkFJToj--_okCjQAcwzYu4ZC6JDX8kznTJhzruBhL9Q5YA"
@@ -79,47 +49,7 @@ openai = OpenAI(
 
 client = OpenAI()
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    print("🚀 Starting Enhanced Fashion Chatbot with Hybrid Intelligence...")
-    
-    # Create upload directory
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    
-    # Connect to database
-    await database.connect()
-    await create_tables()
-    
-    # Initialize NLP
-    global nlp
-    try:
-        nlp = spacy.load("en_core_web_sm")
-        print("✅ Spacy English model loaded")
-    except OSError:
-        print("⚠️ Spacy English model not found. Install with: python -m spacy download en_core_web_sm")
-        nlp = None
-    
-    # Initialize hybrid system
-    print("🧠 Hybrid LLM + Vector system ready!")
-    print("✅ Enhanced Fashion Chatbot is ready!")
-    
-    yield
-    
-    # Shutdown
-    print("🔄 Shutting down application...")
-    try:
-        await database.disconnect()
-        print("✅ Database disconnected properly")
-        
-        # Close the engine
-        await engine.dispose()
-        print("✅ Database engine disposed")
-        
-    except Exception as e:
-        print(f"⚠️ Error during shutdown: {e}")
-
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 
 app.mount("/static", StaticFiles(directory="Chatbot/static"), name="static")
 
@@ -136,2611 +66,6 @@ DATABASE_URL = "mysql+aiomysql://root:@localhost:3306/ecommerce"
 engine = create_async_engine(DATABASE_URL, echo=True)
 
 database = Database(DATABASE_URL)
-
-# ================================
-# FASHION CATEGORIES CONSTANTS
-# ================================
-
-class FashionCategories:
-    """
-    Centralized fashion categories used throughout the application
-    for keyword extraction, preference detection, and consultation summaries
-    Based on existing HybridKeywordExtractor fashion_categories
-    """
-    
-    # CORE CLOTHING ITEMS (Priority 400)
-    CLOTHING_TERMS = [
-        # TOPS
-        'kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 'tshirt',
-        'sweater', 'cardigan', 'hoodie', 'tank top', 'crop top', 'tube top',
-        'halter top', 'camisole', 'singlet', 'vest', 'rompi', 'polo shirt',
-        'henley', 'turtleneck', 'off shoulder', 'cold shoulder', 'wrap top',
-        
-        # BOTTOMS  
-        'celana', 'pants', 'trousers', 'jeans', 'denim', 'rok', 'skirt',
-        'shorts', 'leggings', 'jeggings', 'palazzo pants',
-        'wide leg pants', 'skinny jeans', 'straight jeans', 'bootcut',
-        'flare pants', 'culottes', 'palazzo', 'cargo pants', 'joggers',
-        'track pants', 'sweatpants', 'chinos', 'capri', 'bermuda',
-        
-        # DRESSES
-        'dress', 'gaun', 'terusan', 'maxi dress', 'mini dress', 'midi dress',
-        'bodycon dress', 'a-line dress', 'shift dress', 'wrap dress',
-        'slip dress', 'shirt dress', 'sweater dress', 'sundress',
-        'cocktail dress', 'evening dress',
-        
-        # OUTERWEAR 
-        'jaket', 'jacket', 'blazer', 'coat', 'mantel',
-        'bomber jacket', 'denim jacket', 'leather jacket', 'varsity jacket',
-        'puffer jacket', 'windbreaker', 'raincoat', 'trench coat',
-        'peacoat', 'parka', 'cape', 'poncho',
-
-        # ACCESSORIES 
-        'shawl', 'pashmina', 'scarf', 'belt', 'bag', 'purse', 'jewelry',
-        'necklace', 'earrings', 'bracelet', 'ring', 'watch',
-    ]
-    
-    # SLEEVE TERMS (Priority 350 - extracted from fits_and_styles)
-    SLEEVE_TERMS = [
-        'lengan panjang', 'lengan pendek', 'long sleeve', 'long sleeves',
-        'short sleeve', 'short sleeves', 'sleeveless', 'tanpa lengan',
-        '3/4 sleeve', '3/4 sleeves', 'quarter sleeve', 'quarter sleeves',
-        'cap sleeve', 'cap sleeves', 'bell sleeve', 'bell sleeves',
-        'puff sleeve', 'puff sleeves', 'balloon sleeve', 'balloon sleeves',
-        'bishop sleeve', 'bishop sleeves', 'dolman sleeve', 'dolman sleeves',
-        'raglan sleeve', 'raglan sleeves', 'flutter sleeve', 'flutter sleeves'
-    ]
-    
-    # FIT TERMS (Priority 350 - extracted from fits_and_styles)
-    FIT_TERMS = [
-        'oversized', 'oversize', 'longgar', 'loose', 'baggy', 'relaxed',
-        'fitted', 'ketat', 'tight', 'slim', 'skinny', 'regular fit',
-        'tailored', 'structured', 'flowy', 'draped', 'a-line', 'straight'
-    ]
-    
-    # LENGTH TERMS (Priority 350 - extracted from fits_and_styles)
-    LENGTH_TERMS = [
-        'maxi', 'midi', 'mini', 'ankle length', 'knee length', 'thigh length',
-        'floor length', 'tea length', 'above knee', 'below knee', 'cropped length',
-        'cropped', 'crop', 'panjang', 'pendek', 'long', 'short'
-    ]
-    
-    # NECKLINE TERMS (Priority 350 - extracted from fits_and_styles)
-    NECKLINE_TERMS = [
-        'v-neck', 'scoop neck', 'crew neck', 'boat neck', 'off shoulder',
-        'one shoulder', 'strapless', 'halter neck', 'high neck',
-        'mock neck', 'cowl neck', 'square neck', 'sweetheart neck'
-    ]
-    
-    # STYLE CATEGORIES (Priority 300)
-    STYLE_TERMS = [
-        'casual', 'santai', 'formal', 'resmi', 'elegant', 'elegan',
-        'minimalis', 'minimalist', 'vintage', 'retro', 'bohemian', 'boho',
-        'ethnic', 'etnik', 'modern', 'contemporary', 'classic', 'klasik',
-        'trendy', 'fashionable', 'chic', 'sophisticated', 'edgy',
-        'feminine', 'masculine', 'androgynous', 'romantic', 'sporty',
-        'preppy', 'grunge', 'punk', 'gothic', 'kawaii', 'streetwear'
-    ]
-    
-    # COLOR TERMS (Priority 250 - from colors_and_materials)
-    COLOR_TERMS = [
-        # COLOR CATEGORIES (most important for user preferences)
-        'neutral', 'neutral colors', 'bright colors', 'pastel', 'pastels',
-        'mixed', 'mixed colors', 'colorful', 'earth tones', 'natural colors',
-        'warm colors', 'cool colors', 'monochrome', 'vibrant colors',
-        
-        # BASIC COLORS
-        'hitam', 'black', 'putih', 'white', 'merah', 'red', 'biru', 'blue',
-        'hijau', 'green', 'kuning', 'yellow', 'orange', 'oranye',
-        'ungu', 'purple', 'pink', 'merah muda', 'coklat', 'brown',
-        'abu-abu', 'grey', 'gray', 'navy', 'biru tua', 'maroon',
-        'burgundy', 'wine', 'cream', 'krem', 'beige', 'khaki',
-        'gold', 'emas', 'silver', 'perak', 'rose gold', 'copper',
-        'mint', 'turquoise', 'coral', 'salmon', 'lavender', 'lilac',
-        
-        # GENERIC COLOR TERMS
-        'color', 'colors', 'warna', 'tone', 'tones', 'shade', 'shades'
-    ]
-    
-    # MATERIAL TERMS (Priority 250 - from colors_and_materials)
-    MATERIAL_TERMS = [
-        'cotton', 'katun', 'silk', 'sutra', 'satin', 'chiffon',
-        'lace', 'renda', 'denim', 'leather', 'kulit', 'faux leather',
-        'velvet', 'beludru', 'corduroy', 'tweed', 'wool', 'wol',
-        'cashmere', 'linen', 'polyester', 'spandex', 'elastane',
-        'viscose', 'rayon', 'modal', 'bamboo', 'organic cotton'
-    ]
-    
-    # PATTERN TERMS (Priority 250 - from colors_and_materials)
-    PATTERN_TERMS = [
-        'polos', 'solid', 'plain', 'striped', 'garis-garis', 'polka dot',
-        'floral', 'bunga-bunga', 'geometric', 'abstract', 'animal print',
-        'leopard', 'zebra', 'snake print', 'plaid', 'checkered',
-        'houndstooth', 'paisley', 'tribal', 'ethnic print', 'batik',
-        'tie dye', 'ombre', 'gradient', 'metallic', 'glitter', 'sequin'
-    ]
-    
-    # OCCASION TERMS (Priority 200)
-    OCCASION_TERMS = [
-        'office', 'kantor', 'work', 'kerja', 'business', 'professional',
-        'party', 'pesta', 'clubbing', 'nightout', 'date', 'kencan',
-        'wedding', 'pernikahan', 'formal event', 'graduation', 'wisuda',
-        'beach', 'pantai', 'vacation', 'liburan', 'travel', 'weekend',
-        'everyday', 'sehari-hari', 'casual outing', 'shopping', 'hangout',
-        'gym', 'workout', 'sport', 'olahraga', 'yoga', 'running',
-        'casual everyday', 'work office', 'special events', 'mixed occasions'
-    ]
-    
-    # SPECIAL FEATURES (Priority 180)
-    SPECIAL_FEATURE_TERMS = [
-        'backless', 'open back', 'cut out', 'mesh', 'sheer', 'transparent',
-        'embroidered', 'bordir', 'beaded', 'rhinestone', 'studded',
-        'fringe', 'tassel', 'tie', 'wrap around', 'convertible',
-        'reversible', 'pocket', 'kantong', 'zipper', 'resleting',
-        'button', 'kancing', 'snap', 'hook', 'drawstring', 'elastic'
-    ]
-    
-    # BODY TYPE TERMS (Priority 150 - from body_and_sizes, excluding clothing sizes)
-    BODY_TERMS = [
-        # BODY SHAPES
-        'pear shape', 'bentuk pir', 'apple shape', 'bentuk apel',
-        'hourglass', 'jam pasir', 'rectangle', 'persegi panjang',
-        'inverted triangle', 'athletic build', 'curvy', 'lekuk tubuh',
-        'petite', 'mungil', 'tall', 'tinggi', 'plus size', 'ukuran besar',
-        'maternity', 'hamil', 'nursing', 'menyusui', 'pear',
-        
-        # MEASUREMENTS (only actual measurements)
-        'cm', 'kg', 'height', 'weight', 'tinggi', 'berat'
-    ]
-    
-    # SIZE TERMS (Priority 150 - from body_and_sizes)
-    SIZE_TERMS = [
-        'xs', 'extra small', 'sangat kecil', 's', 'small', 'kecil',
-        'm', 'medium', 'sedang', 'l', 'large', 'besar', 'xl', 'extra large',
-        'xxl', 'xxxl', 'plus size', 'big size', 'ukuran besar',
-        'free size', 'one size', 'ukuran bebas', 'all size'
-    ]
-    
-    # SEASONAL TERMS (Priority 120)
-    SEASONAL_TERMS = [
-        'summer', 'musim panas', 'winter', 'musim dingin', 'spring', 'musim semi',
-        'fall', 'autumn', 'musim gugur', 'rainy season', 'musim hujan',
-        'hot weather', 'cuaca panas', 'cold weather', 'cuaca dingin',
-        'humid', 'lembab', 'tropical', 'tropis'
-    ]
-
-    ACTIVITY_TERMS = [
-        'office worker', 'student', 'teacher', 'work from home', 'remote work',
-        'travel', 'active lifestyle', 'gym', 'sports', 'outdoor activities',
-        'sedentary', 'desk job', 'standing job', 'retail', 'healthcare',
-        'business meetings', 'social events', 'freelancer', 'entrepreneur',
-        'stay at home', 'retired', 'part time', 'full time', 'shift work',
-        'pekerja kantoran', 'mahasiswa', 'guru', 'kerja dari rumah',
-        'sering traveling', 'aktif bergerak', 'olahraga', 'aktivitas outdoor',
-        'banyak duduk', 'kerja berdiri', 'sering meeting', 'acara sosial'
-    ]
-    
-    # BLACKLISTED TERMS (accessories and problematic terms)
-    BLACKLISTED_TERMS = [       
-        # META TERMS
-        'style preference', 'clothing preference', 'fashion choice',
-        'recommendation', 'suggestion', 'option', 'choice',
-        'confirmation', 'question', 'summary', 'information'
-    ]
-    
-    # CONFLICT GROUPS for preference change detection
-    CONFLICT_GROUPS = {
-        'sleeve_length': {
-            'patterns': [r'long sleeve', r'short sleeve', r'sleeveless', r'3/4 sleeve', r'lengan panjang', r'lengan pendek'],
-            'keywords': SLEEVE_TERMS,
-            # NEW: Detailed conflict mapping for precise conflict detection
-            'conflicts': {
-                'long': ['long sleeve', 'long sleeves', 'lengan panjang'],
-                'short': ['short sleeve', 'short sleeves', 'lengan pendek'],
-                'sleeveless': ['sleeveless', 'tanpa lengan', 'tank top'],
-                '3/4': ['3/4 sleeve', '3/4 sleeves', 'quarter sleeve', 'quarter sleeves'],
-                'cap': ['cap sleeve', 'cap sleeves'],
-                'bell': ['bell sleeve', 'bell sleeves'],
-                'puff': ['puff sleeve', 'puff sleeves']
-            }
-        },
-        'color_preference': {
-            'patterns': [r'neutral', r'bright', r'pastel', r'mixed', r'netral', r'terang', r'colorful'],
-            'keywords': COLOR_TERMS,
-            # NEW: Color category conflicts
-            'conflicts': {
-                'neutral': ['neutral', 'neutral colors', 'netral', 'warna netral'],
-                'bright': ['bright', 'bright colors', 'cerah', 'warna cerah', 'vibrant', 'vibrant colors'],
-                'pastel': ['pastel', 'pastels', 'pastel colors'],
-                'dark': ['dark', 'dark colors', 'gelap', 'warna gelap'],
-                'light': ['light', 'light colors', 'terang', 'warna terang'],
-                'warm': ['warm', 'warm colors', 'hangat', 'warna hangat'],
-                'cool': ['cool', 'cool colors', 'sejuk', 'warna sejuk'],
-                'monochrome': ['monochrome', 'monokrom', 'black and white', 'hitam putih'],
-                'colorful': ['colorful', 'mixed', 'mixed colors', 'warna-warni', 'beragam warna']
-            }
-        },
-        'fit_style': {
-            'patterns': [r'fitted', r'loose', r'oversized', r'slim', r'relaxed', r'tight', r'ketat', r'longgar'],
-            'keywords': FIT_TERMS,
-            # NEW: Fit style conflicts
-            'conflicts': {
-                'fitted': ['fitted', 'slim', 'tight', 'ketat', 'tailored'],
-                'loose': ['loose', 'oversized', 'baggy', 'longgar', 'relaxed'],
-                'regular': ['regular fit', 'standard fit'],
-                'structured': ['structured', 'tailored'],
-                'flowy': ['flowy', 'draped', 'flowing']
-            }
-        },
-        'clothing_length': {
-            'patterns': [r'mini', r'midi', r'maxi', r'short', r'long', r'crop', r'pendek', r'panjang'],
-            'keywords': LENGTH_TERMS,
-            # NEW: Length conflicts
-            'conflicts': {
-                'crop': ['crop', 'cropped', 'short length', 'cropped length'],
-                'regular': ['regular length', 'standard length'],
-                'long': ['long length', 'maxi', 'ankle length', 'floor length', 'panjang'],
-                'mini': ['mini', 'very short', 'above knee'],
-                'midi': ['midi', 'knee length', 'below knee'],
-                'maxi': ['maxi', 'ankle length', 'floor length', 'full length'],
-                'short': ['short', 'pendek', 'above knee', 'thigh length'],
-                'knee': ['knee length', 'at knee'],
-                'ankle': ['ankle length', 'full length']
-            }
-        },
-        # NEW: Additional conflict groups
-        'neckline_style': {
-            'patterns': [r'v-neck', r'crew neck', r'scoop neck', r'high neck', r'off shoulder'],
-            'keywords': NECKLINE_TERMS,
-            'conflicts': {
-                'high': ['high neck', 'mock neck', 'turtleneck'],
-                'low': ['v-neck', 'scoop neck', 'deep v'],
-                'off_shoulder': ['off shoulder', 'one shoulder', 'strapless'],
-                'crew': ['crew neck', 'round neck'],
-                'boat': ['boat neck', 'wide neck']
-            }
-        },
-        'style_formality': {
-            'patterns': [r'casual', r'formal', r'elegant', r'sporty'],
-            'keywords': STYLE_TERMS,
-            'conflicts': {
-                'casual': ['casual', 'santai', 'relaxed', 'everyday'],
-                'formal': ['formal', 'resmi', 'business', 'professional'],
-                'elegant': ['elegant', 'elegan', 'sophisticated', 'classy'],
-                'sporty': ['sporty', 'athletic', 'active'],
-                'trendy': ['trendy', 'fashionable', 'modern'],
-                'classic': ['classic', 'klasik', 'timeless', 'traditional']
-            }
-        }
-    }
-
-    COLOR_CATEGORY_MAPPING = {
-        # Neutral colors
-        'neutral': ['black', 'white', 'grey', 'gray', 'beige', 'cream', 'ivory', 'khaki', 'taupe', 'charcoal', 'navy'],
-        'neutral colors': ['black', 'white', 'grey', 'gray', 'beige', 'cream', 'ivory', 'khaki', 'taupe', 'charcoal', 'navy'],
-        'netral': ['black', 'white', 'grey', 'gray', 'beige', 'cream', 'ivory', 'khaki', 'taupe', 'charcoal', 'navy'],
-        'warna netral': ['black', 'white', 'grey', 'gray', 'beige', 'cream', 'ivory', 'khaki', 'taupe', 'charcoal', 'navy'],
-        
-        # Dark colors
-        'dark': ['black', 'navy', 'dark blue', 'charcoal', 'dark grey', 'dark gray', 'maroon', 'burgundy', 'dark green', 'dark brown'],
-        'dark colors': ['black', 'navy', 'dark blue', 'charcoal', 'dark grey', 'dark gray', 'maroon', 'burgundy', 'dark green', 'dark brown'],
-        'gelap': ['black', 'navy', 'dark blue', 'charcoal', 'dark grey', 'dark gray', 'maroon', 'burgundy', 'dark green', 'dark brown'],
-        'warna gelap': ['black', 'navy', 'dark blue', 'charcoal', 'dark grey', 'dark gray', 'maroon', 'burgundy', 'dark green', 'dark brown'],
-        
-        # Light colors
-        'light': ['white', 'cream', 'ivory', 'beige', 'light blue', 'light pink', 'light grey', 'light gray', 'pale yellow', 'mint'],
-        'light colors': ['white', 'cream', 'ivory', 'beige', 'light blue', 'light pink', 'light grey', 'light gray', 'pale yellow', 'mint'],
-        'terang': ['white', 'cream', 'ivory', 'beige', 'light blue', 'light pink', 'light grey', 'light gray', 'pale yellow', 'mint'],
-        'warna terang': ['white', 'cream', 'ivory', 'beige', 'light blue', 'light pink', 'light grey', 'light gray', 'pale yellow', 'mint'],
-        
-        # Bright colors
-        'bright': ['red', 'blue', 'yellow', 'green', 'orange', 'pink', 'purple', 'magenta', 'cyan', 'lime'],
-        'bright colors': ['red', 'blue', 'yellow', 'green', 'orange', 'pink', 'purple', 'magenta', 'cyan', 'lime'],
-        'cerah': ['red', 'blue', 'yellow', 'green', 'orange', 'pink', 'purple', 'magenta', 'cyan', 'lime'],
-        'warna cerah': ['red', 'blue', 'yellow', 'green', 'orange', 'pink', 'purple', 'magenta', 'cyan', 'lime'],
-        'vibrant': ['red', 'blue', 'yellow', 'green', 'orange', 'pink', 'purple', 'magenta', 'cyan', 'lime'],
-        'vibrant colors': ['red', 'blue', 'yellow', 'green', 'orange', 'pink', 'purple', 'magenta', 'cyan', 'lime'],
-        
-        # Pastel colors
-        'pastel': ['pastel pink', 'pastel blue', 'pastel yellow', 'pastel green', 'lavender', 'mint', 'peach', 'baby blue', 'powder pink'],
-        'pastels': ['pastel pink', 'pastel blue', 'pastel yellow', 'pastel green', 'lavender', 'mint', 'peach', 'baby blue', 'powder pink'],
-        'pastel colors': ['pastel pink', 'pastel blue', 'pastel yellow', 'pastel green', 'lavender', 'mint', 'peach', 'baby blue', 'powder pink'],
-        
-        # Earth tones
-        'earth tones': ['brown', 'tan', 'beige', 'khaki', 'olive', 'rust', 'terracotta', 'camel', 'sand', 'moss green'],
-        'earth tone': ['brown', 'tan', 'beige', 'khaki', 'olive', 'rust', 'terracotta', 'camel', 'sand', 'moss green'],
-        'natural colors': ['brown', 'tan', 'beige', 'khaki', 'olive', 'rust', 'terracotta', 'camel', 'sand', 'moss green'],
-        
-        # Warm colors
-        'warm': ['red', 'orange', 'yellow', 'pink', 'coral', 'peach', 'gold', 'burgundy', 'rust', 'terracotta'],
-        'warm colors': ['red', 'orange', 'yellow', 'pink', 'coral', 'peach', 'gold', 'burgundy', 'rust', 'terracotta'],
-        'hangat': ['red', 'orange', 'yellow', 'pink', 'coral', 'peach', 'gold', 'burgundy', 'rust', 'terracotta'],
-        'warna hangat': ['red', 'orange', 'yellow', 'pink', 'coral', 'peach', 'gold', 'burgundy', 'rust', 'terracotta'],
-        
-        # Cool colors
-        'cool': ['blue', 'green', 'purple', 'navy', 'teal', 'mint', 'lavender', 'turquoise', 'cyan', 'indigo'],
-        'cool colors': ['blue', 'green', 'purple', 'navy', 'teal', 'mint', 'lavender', 'turquoise', 'cyan', 'indigo'],
-        'sejuk': ['blue', 'green', 'purple', 'navy', 'teal', 'mint', 'lavender', 'turquoise', 'cyan', 'indigo'],
-        'warna sejuk': ['blue', 'green', 'purple', 'navy', 'teal', 'mint', 'lavender', 'turquoise', 'cyan', 'indigo'],
-        
-        # Monochrome
-        'monochrome': ['black', 'white', 'grey', 'gray'],
-        'monokrom': ['black', 'white', 'grey', 'gray'],
-        'black and white': ['black', 'white'],
-        'hitam putih': ['black', 'white'],
-        
-        # Mixed/Colorful
-        'mixed': ['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 'black', 'white'],
-        'mixed colors': ['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 'black', 'white'],
-        'colorful': ['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 'magenta', 'cyan'],
-        'warna-warni': ['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 'magenta', 'cyan'],
-        'beragam warna': ['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 'magenta', 'cyan'],
-        
-        # Metallic colors
-        'metallic': ['gold', 'silver', 'rose gold', 'copper', 'bronze', 'platinum'],
-        'metalik': ['gold', 'silver', 'rose gold', 'copper', 'bronze', 'platinum'],
-        
-        # Seasonal colors
-        'spring colors': ['pastel pink', 'mint', 'lavender', 'peach', 'light green', 'baby blue'],
-        'summer colors': ['bright blue', 'coral', 'yellow', 'turquoise', 'lime', 'hot pink'],
-        'autumn colors': ['burgundy', 'rust', 'gold', 'brown', 'orange', 'olive'],
-        'winter colors': ['navy', 'black', 'white', 'grey', 'burgundy', 'emerald'],
-        
-        # Professional/Business colors
-        'professional': ['black', 'navy', 'grey', 'gray', 'white', 'beige', 'burgundy'],
-        'business': ['black', 'navy', 'grey', 'gray', 'white', 'beige', 'burgundy'],
-        'formal colors': ['black', 'navy', 'grey', 'gray', 'white', 'beige', 'burgundy']
-    }
-    
-    # NEW: Color synonyms for better matching
-    COLOR_SYNONYMS = {
-        'grey': ['gray', 'grey'],
-        'gray': ['grey', 'gray'],
-        'beige': ['tan', 'sand', 'camel', 'nude'],
-        'navy': ['dark blue', 'navy blue'],
-        'burgundy': ['wine', 'maroon', 'deep red'],
-        'mint': ['mint green', 'light green'],
-        'coral': ['orange pink', 'salmon'],
-        'turquoise': ['teal', 'cyan'],
-        'lavender': ['light purple', 'pale purple'],
-        'rose gold': ['pink gold', 'copper'],
-        'charcoal': ['dark grey', 'dark gray'],
-        'ivory': ['off white', 'cream white'],
-        'khaki': ['olive', 'army green'],
-        'magenta': ['hot pink', 'bright pink'],
-        'indigo': ['dark blue', 'deep blue']
-    }
-    
-    # NEW: Indonesian to English color translations
-    COLOR_TRANSLATIONS = {
-        'hitam': 'black',
-        'putih': 'white', 
-        'merah': 'red',
-        'biru': 'blue',
-        'hijau': 'green',
-        'kuning': 'yellow',
-        'ungu': 'purple',
-        'coklat': 'brown',
-        'abu-abu': 'grey',
-        'pink': 'pink',
-        'orange': 'orange',
-        'emas': 'gold',
-        'perak': 'silver',
-        'krem': 'cream',
-        'navy': 'navy'
-    }
-    
-    # COMPLETE TERM CATEGORIES for summary generation
-    TERM_CATEGORIES = {
-        'clothing_terms': CLOTHING_TERMS,
-        'sleeve_terms': SLEEVE_TERMS,
-        'fit_terms': FIT_TERMS,
-        'length_terms': LENGTH_TERMS,
-        'neckline_terms': NECKLINE_TERMS,
-        'style_terms': STYLE_TERMS,
-        'color_terms': COLOR_TERMS,
-        'material_terms': MATERIAL_TERMS,
-        'pattern_terms': PATTERN_TERMS,
-        'occasion_terms': OCCASION_TERMS,
-        'special_feature_terms': SPECIAL_FEATURE_TERMS,
-        'body_terms': BODY_TERMS,
-        'size_terms': SIZE_TERMS,
-        'seasonal_terms': SEASONAL_TERMS,
-        'blacklisted_terms': BLACKLISTED_TERMS
-    }
-    
-    # PRIORITY MAPPING (from your original HybridKeywordExtractor)
-    PRIORITY_SCORES = {
-        'clothing_terms': 400,
-        'sleeve_terms': 350,
-        'fit_terms': 350,
-        'length_terms': 350,
-        'neckline_terms': 350,
-        'style_terms': 300,
-        'color_terms': 250,
-        'material_terms': 250,
-        'pattern_terms': 250,
-        'occasion_terms': 200,
-        'special_feature_terms': 180,
-        'body_terms': 150,
-        'size_terms': 150,
-        'seasonal_terms': 120
-    }
-    
-    @classmethod
-    def is_blacklisted(cls, keyword):
-        """Check if a keyword is blacklisted"""
-        keyword_lower = str(keyword).lower()
-        return any(blacklisted in keyword_lower for blacklisted in cls.BLACKLISTED_TERMS)
-    
-    @classmethod
-    def get_category(cls, keyword):
-        """Get the category of a keyword"""
-        keyword_lower = str(keyword).lower()
-        
-        for category_name, terms in cls.TERM_CATEGORIES.items():
-            if category_name == 'blacklisted_terms':
-                continue
-                
-            for term in terms:
-                if (term.lower() == keyword_lower or 
-                    term.lower() in keyword_lower or 
-                    keyword_lower in term.lower()):
-                    return category_name
-        
-        return 'unknown'
-    
-    @classmethod
-    def get_priority_score(cls, keyword):
-        """Get priority score for a keyword based on its category"""
-        category = cls.get_category(keyword)
-        return cls.PRIORITY_SCORES.get(category, 50)  # Default score for unknown
-    
-    @classmethod
-    def is_color_preference(cls, keyword):
-        """Check if keyword is a color preference"""
-        keyword_lower = str(keyword).lower()
-        return any(color_term in keyword_lower for color_term in 
-                  ['color', 'warna', 'neutral', 'bright', 'mixed', 'pastel', 'colorful'])
-    
-    @classmethod
-    def is_sleeve_preference(cls, keyword):
-        """Check if keyword is a sleeve preference"""
-        keyword_lower = str(keyword).lower()
-        return any(sleeve_term in keyword_lower for sleeve_term in cls.SLEEVE_TERMS)
-    
-    @classmethod
-    def get_all_fashion_concepts(cls):
-        """Get all fashion concepts for vector embedding (used by HybridKeywordExtractor)"""
-        all_concepts = []
-        for category_name, terms in cls.TERM_CATEGORIES.items():
-            if category_name != 'blacklisted_terms':
-                all_concepts.extend(terms)
-        return all_concepts
-    
-    @classmethod
-    def get_color_mapping(cls, color_category):
-        """Get colors for a given color category"""
-        return cls.COLOR_CATEGORY_MAPPING.get(color_category.lower(), [])
-    
-    @classmethod
-    def is_color_category(cls, keyword):
-        """Check if a keyword is a color category that maps to specific colors"""
-        return keyword.lower() in cls.COLOR_CATEGORY_MAPPING
-    
-    @classmethod
-    def get_color_synonyms(cls, color):
-        """Get synonyms for a given color"""
-        return cls.COLOR_SYNONYMS.get(color.lower(), [])
-    
-    @classmethod
-    def translate_color(cls, color):
-        """Translate color between Indonesian and English"""
-        color_lower = color.lower()
-        
-        # Indonesian to English
-        if color_lower in cls.COLOR_TRANSLATIONS:
-            return cls.COLOR_TRANSLATIONS[color_lower]
-        
-        # English to Indonesian
-        for indo_color, eng_color in cls.COLOR_TRANSLATIONS.items():
-            if eng_color == color_lower:
-                return indo_color
-        
-        return color  # Return original if no translation found
-    
-    @classmethod
-    def get_all_color_mappings(cls):
-        """Get the complete color category mapping dictionary"""
-        return cls.COLOR_CATEGORY_MAPPING
-    
-    @classmethod
-    def get_conflict_groups(cls):
-        """Get all conflict groups"""
-        return cls.CONFLICT_GROUPS
-    
-    @classmethod
-    def get_conflict_group(cls, group_name):
-        """Get a specific conflict group"""
-        return cls.CONFLICT_GROUPS.get(group_name, {})
-    
-    @classmethod
-    def get_conflict_mapping(cls, group_name):
-        """Get the detailed conflict mapping for a group"""
-        group = cls.CONFLICT_GROUPS.get(group_name, {})
-        return group.get('conflicts', {})
-    
-    @classmethod
-    def detect_conflicts_in_group(cls, group_name, user_preferences, product_text):
-        """
-        Detect conflicts between user preferences and product for a specific group
-        Returns: (has_conflict, conflict_details)
-        """
-        conflict_mapping = cls.get_conflict_mapping(group_name)
-        if not conflict_mapping or not user_preferences:
-            return False, {}
-        
-        product_text_lower = product_text.lower()
-        conflicts_found = []
-        
-        # Find what the user prefers in this group
-        user_pref_type = None
-        user_pref_weight = 0
-        user_pref_keyword = None
-        
-        for pref_type, terms in conflict_mapping.items():
-            for term in terms:
-                for pref_keyword, weight, _ in user_preferences:
-                    if term in pref_keyword.lower() or pref_keyword.lower() in term:
-                        if weight > user_pref_weight:
-                            user_pref_type = pref_type
-                            user_pref_weight = weight
-                            user_pref_keyword = pref_keyword
-        
-        if not user_pref_type:
-            return False, {}
-        
-        # Check if product conflicts with user preference
-        conflicting_terms = []
-        for other_type, terms in conflict_mapping.items():
-            if other_type != user_pref_type:
-                for term in terms:
-                    if term in product_text_lower:
-                        conflicting_terms.append(term)
-        
-        if conflicting_terms:
-            return True, {
-                'user_preference': user_pref_type,
-                'user_keyword': user_pref_keyword,
-                'user_weight': user_pref_weight,
-                'conflicting_terms': conflicting_terms,
-                'group': group_name
-            }
-        
-        return False, {}
-    
-# ================================
-# NEW HYBRID LLM + VECTOR CLASSES
-# ================================
-
-class HybridKeywordExtractor:
-    """
-    INTEGRATED: HybridKeywordExtractor using FashionCategories class
-    """
-    
-    def __init__(self, openai_client):
-        self.openai_client = openai_client
-        self.vector_enabled = False
-        self.sentence_model = None
-        self.concept_embeddings = None
-        
-        # Try to initialize vector capabilities
-        try:
-            from sentence_transformers import SentenceTransformer
-            self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
-            self.vector_enabled = True
-            print("✅ Sentence Transformers initialized successfully")
-            
-        except ImportError:
-            self.vector_enabled = False
-            print("⚠️ Sentence Transformers not available. Install with: pip install sentence-transformers")
-        except Exception as e:
-            self.vector_enabled = False
-            print(f"⚠️ Vector initialization failed: {e}")
-
-        # Use FashionCategories instead of local fashion_categories
-        self.fashion_categories = FashionCategories()
-        
-        # Get all fashion concepts for vector embedding
-        self.fashion_concepts = self.fashion_categories.get_all_fashion_concepts()
-        print(f"📚 Loaded {len(self.fashion_concepts)} fashion concepts from FashionCategories")
-        
-        # Initialize concept embeddings if vector is enabled
-        if self.vector_enabled:
-            self._initialize_concept_embeddings()
-    
-    def _initialize_concept_embeddings(self):
-        """
-        FIXED: Safe initialization of concept embeddings using FashionCategories
-        """
-        if not self.vector_enabled or not self.sentence_model:
-            return
-        
-        try:
-            print("🔄 Initializing fashion concept embeddings...")
-            
-            if len(self.fashion_concepts) == 0:
-                print("⚠️ No fashion concepts found")
-                return
-            
-            # Generate embeddings
-            self.concept_embeddings = self.sentence_model.encode(self.fashion_concepts)
-            print(f"✅ Generated embeddings shape: {self.concept_embeddings.shape}")
-            
-        except Exception as e:
-            print(f"❌ Failed to initialize concept embeddings: {e}")
-            self.vector_enabled = False
-            self.concept_embeddings = None
-
-    def _is_relevant_keyword(self, keyword, user_input=None):
-        """
-        INTEGRATED: Using FashionCategories for relevance checking
-        """
-        if not keyword or len(str(keyword)) < 2:
-            return False
-        
-        keyword_lower = str(keyword).lower()
-        
-        # STEP 1: Check if it's blacklisted
-        if self.fashion_categories.is_blacklisted(keyword_lower):
-            print(f"   ❌ BLACKLISTED: '{keyword}' → NOT RELEVANT")
-            return False
-        
-        # STEP 2: Check if it's a known fashion term
-        category = self.fashion_categories.get_category(keyword_lower)
-        if category != 'unknown':
-            print(f"   ✅ FASHION TERM: '{keyword}' → RELEVANT ({category})")
-            return True
-        
-        # STEP 3: Check for fashion context in user input
-        if user_input and self._has_fashion_context(keyword, user_input):
-            print(f"   ✅ FASHION CONTEXT: '{keyword}' → RELEVANT")
-            return True
-        
-        # STEP 4: Allow compound fashion terms
-        if self._is_compound_fashion_term(keyword):
-            print(f"   ✅ COMPOUND FASHION: '{keyword}' → RELEVANT")
-            return True
-        
-        # STEP 5: Allow descriptive terms that commonly appear with fashion
-        if self._is_fashion_descriptive(keyword):
-            print(f"   ✅ FASHION DESCRIPTIVE: '{keyword}' → RELEVANT")
-            return True
-        
-        # STEP 6: Be more conservative - reject unclear terms
-        print(f"   ❌ UNCLEAR TERM: '{keyword}' → NOT RELEVANT")
-        return False
-    
-    def _is_directly_relevant(self, keyword, user_input):
-        """INTEGRATED: Check if keyword is directly relevant using FashionCategories"""
-        keyword_lower = keyword.lower()
-        user_input_lower = user_input.lower()
-        
-        # Check if blacklisted first
-        if self.fashion_categories.is_blacklisted(keyword_lower):
-            return False
-        
-        # Must be explicitly mentioned
-        if keyword_lower in user_input_lower:
-            return True
-        
-        # Check if any word from the keyword appears in user input
-        keyword_words = keyword_lower.split()
-        if any(word in user_input_lower for word in keyword_words):
-            return True
-        
-        # If user mentions a clothing item, allow only directly related style/fit terms
-        clothing_mentioned = any(clothing in user_input_lower 
-                               for clothing in self.fashion_categories.CLOTHING_TERMS)
-        
-        if clothing_mentioned:
-            # Only allow basic style terms when clothing is mentioned
-            basic_style_terms = ['casual', 'formal', 'santai', 'resmi', 'elegant', 'elegan']
-            if keyword_lower in basic_style_terms:
-                return True
-        
-        return False
-    
-    def _is_compound_fashion_term(self, keyword):
-        """Check for compound fashion terms using FashionCategories patterns"""
-        keyword_lower = str(keyword).lower()
-        
-        # Check against conflict groups which contain compound patterns
-        for group_name, group_data in self.fashion_categories.CONFLICT_GROUPS.items():
-            patterns = group_data.get('patterns', [])
-            for pattern in patterns:
-                if re.search(pattern, keyword_lower):
-                    return True
-        
-        # Additional compound patterns
-        compound_patterns = [
-            # General compound patterns not in conflict groups
-            r'\b(plus|big|free|one)\s+(size|sizes)\b',
-            r'\b(earth|natural)\s+(tone|tones|color|colors)\b',
-            r'\b(warm|cool)\s+(color|colors|tone|tones)\b'
-        ]
-        
-        for pattern in compound_patterns:
-            if re.search(pattern, keyword_lower):
-                return True
-        
-        return False
-    
-    def _is_fashion_descriptive(self, keyword):
-        """Check for descriptive terms commonly used in fashion"""
-        keyword_lower = str(keyword).lower()
-        
-        # Common fashion descriptive terms
-        descriptive_terms = [
-            'comfortable', 'stylish', 'trendy', 'classic', 'modern', 'vintage',
-            'flattering', 'versatile', 'chic', 'sophisticated', 'edgy',
-            'feminine', 'masculine', 'youthful', 'mature', 'professional',
-            'breathable', 'stretchy', 'soft', 'lightweight', 'durable',
-            'washable', 'wrinkle-free', 'easy-care', 'low-maintenance'
-        ]
-        
-        return any(desc in keyword_lower for desc in descriptive_terms)
-    
-    def _has_fashion_context(self, keyword, user_input):
-        """INTEGRATED: Better fashion context detection using FashionCategories"""
-        if not user_input:
-            return False
-        
-        user_input_lower = user_input.lower()
-        keyword_lower = keyword.lower()
-        
-        # Fashion context indicators from clothing terms
-        fashion_indicators = self.fashion_categories.CLOTHING_TERMS + [
-            'style', 'fashion', 'gaya', 'outfit', 'clothing',
-            'wear', 'pakai', 'carikan', 'recommendation', 'suggest', 'cocok'
-        ]
-        
-        # Check if keyword appears in a fashion context
-        for indicator in fashion_indicators:
-            if indicator.lower() in user_input_lower and keyword_lower in user_input_lower:
-                return True
-        
-        return False
-
-    async def _extract_with_llm_improved(self, user_input):
-        """INTEGRATED: LLM extraction using FashionCategories validation"""
-        prompt = f"""
-        Extract ONLY the most relevant fashion keywords from this text. Be selective and focused.
-        
-        Text: "{user_input}"
-        
-        Rules:
-        1. Extract ONLY terms that are directly mentioned or clearly implied
-        2. Focus on: specific clothing items, styles, fits, colors mentioned
-        3. Don't add generic terms unless explicitly stated
-        4. Maximum 5-6 keywords for short inputs like this
-        
-        Return a JSON array with the most important keywords:
-        Example: ["kemeja", "casual"] for "bisa carikan kemeja casual"
-        
-        Be SELECTIVE - only include what's actually relevant to the specific request.
-        """
-        
-        try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=100
-            )
-            
-            response_text = response.choices[0].message.content.strip()
-            
-            if '[' in response_text and ']' in response_text:
-                start = response_text.find('[')
-                end = response_text.find(']') + 1
-                json_text = response_text[start:end]
-                
-                keywords_list = json.loads(json_text)
-                
-                result = []
-                for i, keyword in enumerate(keywords_list):
-                    if isinstance(keyword, str) and len(keyword) > 1:
-                        # Use FashionCategories for validation
-                        if self._is_directly_relevant(keyword.lower(), user_input):
-                            score = self.fashion_categories.get_priority_score(keyword.lower())
-                            position_score = score - (i * 5)
-                            result.append((keyword.lower(), max(position_score, 50)))
-                            print(f"   ✅ LLM ACCEPTED: '{keyword}' → {position_score:.1f}")
-                        else:
-                            print(f"   🚫 LLM REJECTED: '{keyword}' (not directly relevant)")
-                
-                return result
-            else:
-                return self._extract_manual_keywords_improved(user_input)
-            
-        except Exception as e:
-            print(f"   ❌ LLM extraction error: {e}")
-            return self._extract_manual_keywords_improved(user_input)
-    
-    def _extract_with_vectors_improved(self, user_input):
-        """INTEGRATED: Vector extraction using FashionCategories"""
-        if not self.vector_enabled:
-            return []
-        
-        try:
-            input_embedding = self.sentence_model.encode([user_input])
-            
-            # FIXED: Ensure proper vector dimensions
-            if len(input_embedding.shape) == 2:
-                input_embedding = input_embedding[0]
-            
-            # FIXED: Ensure both vectors are 1D and have same shape
-            if len(self.concept_embeddings.shape) == 2:
-                similarities = cosine_similarity([input_embedding], self.concept_embeddings)[0]
-            else:
-                concept_embeddings_2d = self.concept_embeddings.reshape(1, -1)
-                similarities = cosine_similarity([input_embedding], concept_embeddings_2d)[0]
-            
-            keywords = []
-            user_input_lower = user_input.lower()
-            
-            for i, similarity in enumerate(similarities):
-                concept = self.fashion_concepts[i]
-                
-                # Skip blacklisted terms immediately
-                if self.fashion_categories.is_blacklisted(concept):
-                    continue
-                
-                # IMPROVED: Much more selective filtering
-                should_include = False
-                
-                # HIGH similarity threshold for automatic inclusion (very confident matches)
-                if similarity > 0.6:
-                    should_include = True
-                    print(f"   🎯 HIGH SIMILARITY: '{concept}' → {similarity:.3f}")
-                
-                # MEDIUM similarity with additional validation
-                elif similarity > 0.5:
-                    # Must be explicitly mentioned OR be a core clothing item
-                    if (concept in user_input_lower or 
-                        any(word in user_input_lower for word in concept.split()) or
-                        concept in self.fashion_categories.CLOTHING_TERMS):
-                        should_include = True
-                        print(f"   ✅ MEDIUM + CONTEXT: '{concept}' → {similarity:.3f}")
-                    else:
-                        print(f"   ❌ MEDIUM NO CONTEXT: '{concept}' → {similarity:.3f}")
-                
-                # LOW similarity - only if explicitly mentioned
-                elif similarity > 0.4:
-                    if concept in user_input_lower:
-                        should_include = True
-                        print(f"   ✅ LOW BUT EXPLICIT: '{concept}' → {similarity:.3f}")
-                    else:
-                        print(f"   ❌ LOW NO MENTION: '{concept}' → {similarity:.3f}")
-                
-                if should_include and self._is_relevant_keyword(concept, user_input):
-                    score = similarity * 100  # Convert to score
-                    keywords.append((concept, score))
-            
-            # Sort by similarity and limit results
-            keywords.sort(key=lambda x: x[1], reverse=True)
-            
-            # IMPROVED: Return fewer but more relevant results
-            top_keywords = keywords[:3]
-            
-            print(f"   🎯 Vector extraction found {len(top_keywords)} high-quality keywords")
-            return top_keywords
-            
-        except Exception as e:
-            print(f"   ❌ Vector extraction error: {e}")
-            return []
-
-    async def extract_keywords_hybrid(self, ai_response=None, translated_input=None, accumulated_keywords=None):
-        """
-        INTEGRATED: Hybrid extraction using FashionCategories
-        """
-        print("\n🧠 INTEGRATED HYBRID KEYWORD EXTRACTION")
-        print("="*60)
-        
-        all_keywords = {}
-        
-        # STEP 1: LLM Analysis (primary source)
-        if translated_input:
-            llm_keywords = await self._extract_with_llm_improved(translated_input)
-            for keyword, score in llm_keywords:
-                all_keywords[keyword] = score
-                print(f"   🤖 LLM: '{keyword}' → {score:.1f}")
-        
-        # STEP 2: Vector Analysis (secondary, more conservative)
-        if self.vector_enabled and translated_input:
-            vector_keywords = self._extract_with_vectors_improved(translated_input)
-            for keyword, score in vector_keywords:
-                if keyword in all_keywords:
-                    all_keywords[keyword] = max(all_keywords[keyword], score)
-                else:
-                    all_keywords[keyword] = score
-                print(f"   🔍 Vector: '{keyword}' → {score:.1f}")
-        
-        # STEP 3: Process AI response (minimal weight)
-        if ai_response:
-            ai_keywords = self._extract_from_ai_response_improved(ai_response)
-            for keyword, score in ai_keywords:
-                if keyword in all_keywords:
-                    all_keywords[keyword] += score * 0.2
-                else:
-                    all_keywords[keyword] = score * 0.2
-                print(f"   💬 AI Response: '{keyword}' → {score * 0.2:.1f}")
-        
-        # STEP 4: Include only relevant accumulated keywords
-        if accumulated_keywords:
-            for keyword, old_score in accumulated_keywords[:5]:
-                if (self._is_valid_accumulated_keyword(keyword) and 
-                    self._is_directly_relevant(keyword, translated_input or "")):
-                    decay_score = old_score * 0.1
-                    if keyword in all_keywords:
-                        all_keywords[keyword] += decay_score
-                    else:
-                        all_keywords[keyword] = decay_score
-                    print(f"   📚 Accumulated: '{keyword}' → {decay_score:.1f}")
-                else:
-                    print(f"   🗑️ Skipped accumulated: '{keyword}' (invalid/irrelevant)")
-        
-        # STEP 5: More aggressive filtering using FashionCategories
-        filtered_keywords = {}
-        for keyword, score in all_keywords.items():
-            if (not self.fashion_categories.is_blacklisted(keyword) and 
-                self._is_relevant_keyword(keyword, translated_input) and 
-                score > 10):
-                filtered_keywords[keyword] = score
-            else:
-                print(f"   🗑️ Filtered out: '{keyword}' (score: {score:.1f})")
-        
-        # STEP 6: Post-process to handle conflicts
-        final_keywords = self._post_process_keywords(filtered_keywords, translated_input)
-        
-        # Sort and return fewer results
-        ranked_keywords = sorted(final_keywords.items(), key=lambda x: x[1], reverse=True)
-        
-        print(f"\n🏆 INTEGRATED RESULTS:")
-        for i, (keyword, score) in enumerate(ranked_keywords[:8]):
-            category = self.fashion_categories.get_category(keyword)
-            print(f"   {i+1:2d}. '{keyword}' → {score:.1f} ({category})")
-        
-        return ranked_keywords[:8]
-    
-    def _extract_from_ai_response_improved(self, ai_response):
-        """INTEGRATED: AI response extraction using FashionCategories"""
-        bold_headings = re.findall(r'\*\*(.*?)\*\*', ai_response)
-        
-        keywords = []
-        for heading in bold_headings:
-            cleaned = re.sub(r'[^\w\s-]', '', heading.lower()).strip()
-            
-            # More conservative filtering using FashionCategories
-            if (len(cleaned) > 2 and 
-                not re.match(r'^\d+', cleaned) and
-                len(cleaned.split()) <= 2 and
-                not self.fashion_categories.is_blacklisted(cleaned) and
-                self.fashion_categories.get_category(cleaned) != 'unknown'):
-                
-                score = self.fashion_categories.get_priority_score(cleaned)
-                keywords.append((cleaned, score * 0.5))
-        
-        return keywords
-    
-    def _is_valid_accumulated_keyword(self, keyword):
-        """INTEGRATED: Validation using FashionCategories"""
-        if not keyword or len(str(keyword)) < 2:
-            return False
-        
-        keyword_str = str(keyword).lower()
-        
-        # Use FashionCategories blacklist
-        if self.fashion_categories.is_blacklisted(keyword_str):
-            return False
-        
-        # Additional checks for problematic terms
-        if (re.match(r'^\d+', keyword_str) or
-            len(keyword_str) > 30 or
-            any(bad in keyword_str for bad in 
-                ['rb', 'ribu', '000', 'idr', 'price', 'chart', 'spec'])):
-            return False
-        
-        return True
-    
-    def _post_process_keywords(self, keywords_dict, user_input):
-        """INTEGRATED: Post-process using FashionCategories conflict detection"""
-        if not user_input:
-            return keywords_dict
-        
-        user_input_lower = user_input.lower()
-        processed_keywords = {}
-        
-        for keyword, score in keywords_dict.items():
-            # Handle conflicts using FashionCategories conflict groups
-            conflict_detected = False
-            
-            for group_name, group_data in self.fashion_categories.CONFLICT_GROUPS.items():
-                patterns = group_data.get('patterns', [])
-                
-                # Check if this keyword matches any pattern in the group
-                keyword_matches_group = False
-                for pattern in patterns:
-                    if re.search(pattern, keyword):
-                        keyword_matches_group = True
-                        break
-                
-                if keyword_matches_group:
-                    # Check if user input contains conflicting terms
-                    for pattern in patterns:
-                        if (re.search(pattern, user_input_lower) and 
-                            not re.search(pattern, keyword)):
-                            # Conflict detected
-                            score *= 0.1
-                            conflict_detected = True
-                            print(f"   ⚖️ Conflict in {group_name}: reduced '{keyword}' score")
-                            break
-                
-                if conflict_detected:
-                    break
-            
-            # Boost terms that are explicitly mentioned
-            if keyword in user_input_lower:
-                score *= 1.5
-                print(f"   🚀 Boosted '{keyword}' (explicitly mentioned)")
-            
-            processed_keywords[keyword] = score
-        
-        return processed_keywords
-    
-    def extract_color_preferences_enhanced(accumulated_keywords):
-        """
-        ENHANCED: Extract color preferences with better detection and priority boost
-        """
-        color_preferences = []
-        
-        print(f"\n🎨 ENHANCED COLOR PREFERENCE EXTRACTION:")
-        print("=" * 60)
-        
-        # Get all color-related keywords with significant weights
-        for keyword, data in accumulated_keywords.items():
-            if keyword is None:
-                continue
-                
-            weight = data.get("weight", 0) if isinstance(data, dict) else data
-            source = data.get("source", "unknown") if isinstance(data, dict) else "unknown"
-            keyword_lower = str(keyword).lower()
-            
-            # Check if it's a color-related keyword with lower threshold to catch more
-            if (FashionCategories.get_category(keyword) == 'color_terms' and 
-                weight > 100):  # Much lower threshold to catch more colors
-                
-                # Skip only the most generic terms
-                skip_terms = ['color', 'colors', 'warna', 'tone', 'tones', 'shade', 'shades']
-                if keyword_lower in skip_terms:
-                    continue
-                
-                # ENHANCED: Apply massive boost based on source and user input patterns
-                final_weight = weight
-                
-                # Check if this was from user input (high priority)
-                if source == "user_input":
-                    final_weight = weight * 5.0  # 5x boost for user input colors
-                    print(f"   🎨🔥 USER INPUT COLOR: '{keyword_lower}' → {weight:.0f} → BOOSTED TO {final_weight:.0f}")
-                
-                # Check if this was from consultation (very high priority)
-                elif source == "consultation":
-                    final_weight = weight * 8.0  # 8x boost for consultation colors
-                    print(f"   🎨🔥 CONSULTATION COLOR: '{keyword_lower}' → {weight:.0f} → BOOSTED TO {final_weight:.0f}")
-                
-                # Check if it's a color category that maps to specific colors
-                if FashionCategories.is_color_category(keyword_lower):
-                    # Add all colors from the category mapping with boosted weight
-                    mapped_colors = FashionCategories.get_color_mapping(keyword_lower)
-                    for mapped_color in mapped_colors:
-                        mapped_weight = final_weight * 0.9  # Keep most of the boost for mapped colors
-                        color_preferences.append((mapped_color, mapped_weight))
-                        print(f"   🎨 MAPPED COLOR: '{keyword_lower}' → '{mapped_color}' → {mapped_weight:.0f}")
-                else:
-                    # Direct color mention
-                    color_preferences.append((keyword_lower, final_weight))
-                    print(f"   🎨 DIRECT COLOR: '{keyword_lower}' → {final_weight:.0f}")
-        
-        # Remove duplicates and combine weights for same colors
-        color_dict = {}
-        for color, weight in color_preferences:
-            if color in color_dict:
-                color_dict[color] += weight  # Combine weights for duplicate colors
-            else:
-                color_dict[color] = weight
-        
-        # Convert back to list and sort by weight
-        final_color_preferences = [(color, weight) for color, weight in color_dict.items()]
-        final_color_preferences.sort(key=lambda x: x[1], reverse=True)
-        
-        # Return top color preferences
-        top_colors = final_color_preferences[:10]  # Increased from 8 to 10
-        
-        print(f"\n🎨 FINAL ENHANCED COLOR PREFERENCES:")
-        for i, (color, weight) in enumerate(top_colors):
-            print(f"   {i+1}. '{color}' → {weight:.0f}")
-        
-        return top_colors
-    
-    def _extract_manual_keywords_improved(self, text):
-        """INTEGRATED: Manual extraction using FashionCategories"""
-        text_lower = text.lower()
-        found_keywords = []
-        
-        # Extract only clearly mentioned keywords using all fashion concepts
-        for concept in self.fashion_concepts:
-            # Skip blacklisted terms
-            if self.fashion_categories.is_blacklisted(concept):
-                continue
-                
-            # CONSERVATIVE matching - exact presence required
-            if (f" {concept} " in f" {text_lower} " or 
-                text_lower.startswith(f"{concept} ") or
-                text_lower.endswith(f" {concept}") or
-                concept == text_lower):
-                
-                score = self.fashion_categories.get_priority_score(concept)
-                found_keywords.append((concept, score))
-        
-        # Sort by score and return top keywords
-        found_keywords.sort(key=lambda x: x[1], reverse=True)
-        return found_keywords[:5]
-    
-    def _get_keyword_priority_score(self, keyword):
-        """INTEGRATED: Use FashionCategories priority scoring"""
-        return self.fashion_categories.get_priority_score(keyword)
-    
-    def _get_keyword_category(self, keyword):
-        """INTEGRATED: Use FashionCategories category detection"""
-        return self.fashion_categories.get_category(keyword)
-                
-class SmartConsultationManager:
-    """
-    UPDATED: Consultation manager with daily activity question included
-    """
-    
-    def __init__(self, openai_client, hybrid_extractor=None):
-        self.openai_client = openai_client
-        self.hybrid_extractor = hybrid_extractor
-        
-        # Use the FashionCategories if available
-        if hybrid_extractor and hasattr(hybrid_extractor, 'fashion_categories'):
-            self.fashion_categories = hybrid_extractor.fashion_categories
-        else:
-            self.fashion_categories = self._get_fallback_categories()
-        
-        # Track what questions have been asked per session
-        self.session_questions_asked = {}
-    
-    def _get_fallback_categories(self):
-        """Fallback categories matching the FashionCategories"""
-        return {
-            'style_categories': ['casual', 'formal', 'elegant', 'minimalis', 'trendy', 'vintage'],
-            'core_clothing': ['kemeja', 'shirt', 'dress', 'celana', 'pants', 'rok', 'blazer'],
-            'fits_and_styles': ['oversized', 'fitted', 'loose', 'slim', 'relaxed', 'tailored', 'long sleeves', 'short sleeves'],
-            'colors_and_materials': ['black', 'white', 'red', 'blue', 'hitam', 'putih', 'netral', 'neutral colors'],
-            'occasions': ['work', 'casual', 'party', 'wedding', 'everyday', 'sehari-hari', 'casual everyday']
-        }
-    
-    def _get_session_questions(self, session_id):
-        """Get or initialize questions asked for this session - UPDATED with daily activity"""
-        if session_id not in self.session_questions_asked:
-            self.session_questions_asked[session_id] = {
-                'gender_asked': False,
-                'body_info_asked': False,
-                'daily_activity_asked': False,  
-                'style_asked': False,
-                'clothing_asked': False,
-                'fit_asked': False,
-                'sleeves_asked': False,
-                'colors_asked': False,
-                'occasions_asked': False,
-                'budget_asked': False,
-                'summary_shown': False
-            }
-        return self.session_questions_asked[session_id]
-    
-    def _mark_question_asked(self, session_id, question_type):
-        """Mark a question type as asked"""
-        questions = self._get_session_questions(session_id)
-        questions[question_type] = True
-    
-    def _detect_clothing_from_keywords(self, accumulated_keywords):
-        """
-        Detect clothing items from accumulated keywords
-        """
-        if not accumulated_keywords:
-            return None
-        
-        # Use FashionCategories if available
-        if hasattr(FashionCategories, 'CLOTHING_TERMS'):
-            clothing_terms = FashionCategories.CLOTHING_TERMS
-        else:
-            # Fallback clothing terms
-            clothing_terms = [
-                'kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 'tshirt',
-                'sweater', 'cardigan', 'hoodie', 'tank top', 'crop top', 'polo shirt',
-                'dress', 'gaun', 'terusan', 'maxi dress', 'mini dress', 'midi dress',
-                'celana', 'pants', 'trousers', 'jeans', 'denim', 'shorts', 'leggings',
-                'rok', 'skirt', 'culottes', 'palazzo',
-                'blazer', 'jaket', 'jacket', 'coat', 'bomber jacket', 'denim jacket',
-                'top', 'vest', 'rompi'
-            ]
-        
-        detected_clothing = []
-        
-        # Check accumulated keywords for clothing items
-        for keyword, data in accumulated_keywords.items():
-            if keyword is None:
-                continue
-                
-            weight = data.get("weight", 0) if isinstance(data, dict) else data
-            keyword_lower = str(keyword).lower()
-            
-            # More flexible matching - exact match OR contains
-            clothing_match = False
-            for clothing_term in clothing_terms:
-                if (clothing_term == keyword_lower or 
-                    clothing_term in keyword_lower or 
-                    keyword_lower in clothing_term):
-                    clothing_match = True
-                    break
-            
-            # If keyword matches clothing and has significant weight
-            if clothing_match and weight > 1000:
-                detected_clothing.append((keyword_lower, weight))
-                print(f"🎯 DETECTED CLOTHING FROM KEYWORDS: '{keyword_lower}' (weight: {weight:.0f})")
-        
-        if detected_clothing:
-            # Sort by weight and return the highest weighted clothing item
-            detected_clothing.sort(key=lambda x: x[1], reverse=True)
-            top_clothing = detected_clothing[0][0]
-            print(f"✅ PRIMARY CLOTHING DETECTED: '{top_clothing}'")
-            return top_clothing
-        
-        return None
-    
-    def _categorize_keywords(self, accumulated_keywords):
-        """
-        Better categorization using FashionCategories if available
-        """
-        known_info = {
-            'gender': False,
-            'body_info': False,
-            'daily_activity': False,  
-            'style': False,
-            'clothing': False,
-            'fit': False,
-            'colors': False,
-            'occasions': False,
-            'sleeves': False,
-            'budget': False
-        }
-        
-        detected_preferences = []
-        
-        # Use FashionCategories if available, otherwise fallback
-        if hasattr(FashionCategories, 'TERM_CATEGORIES'):
-            term_categories = {
-                'sleeve_terms': FashionCategories.SLEEVE_TERMS,
-                'body_terms': FashionCategories.BODY_TERMS,
-                'style_terms': FashionCategories.STYLE_TERMS,
-                'clothing_terms': FashionCategories.CLOTHING_TERMS,
-                'fit_terms': FashionCategories.FIT_TERMS,
-                'color_terms': FashionCategories.COLOR_TERMS,
-                'occasion_terms': FashionCategories.OCCASION_TERMS,
-                'activity_terms': FashionCategories.ACTIVITY_TERMS
-            }
-        else:
-            # Fallback term categories
-            term_categories = {
-                'sleeve_terms': [
-                    'lengan panjang', 'lengan pendek', 'long sleeve', 'long sleeves',
-                    'short sleeve', 'short sleeves', 'sleeveless', 'tanpa lengan',
-                    '3/4 sleeve', '3/4 sleeves', 'quarter sleeve', 'quarter sleeves',
-                    'cap sleeve', 'cap sleeves', 'bell sleeve', 'bell sleeves',
-                    'puff sleeve', 'puff sleeves'
-                ],
-                'body_terms': [
-                    'petite', 'mungil', 'tall', 'tinggi', 'short', 'pendek',
-                    'pear shape', 'bentuk pir', 'apple shape', 'bentuk apel',
-                    'hourglass', 'jam pasir', 'rectangle', 'persegi panjang',
-                    'inverted triangle', 'athletic build', 'curvy', 'lekuk tubuh',
-                    'slim build', 'average build', 'plus size', 'ukuran besar',
-                    'cm', 'kg', 'height', 'weight', 'tinggi', 'berat', 'body type', 'pear'
-                ],
-                'style_terms': [
-                    'casual', 'formal', 'elegant', 'minimalis', 'trendy', 'vintage', 
-                    'classic', 'modern', 'chic', 'sophisticated', 'edgy', 'bohemian'
-                ],
-                'clothing_terms': [
-                    'kemeja', 'shirt', 'blouse', 'dress', 'gaun', 'celana', 'pants', 
-                    'rok', 'skirt', 'blazer', 'jaket', 'sweater', 'cardigan', 'hoodie',
-                    'top', 'kaos', 't-shirt', 'tshirt'
-                ],
-                'fit_terms': [
-                    'oversized', 'fitted', 'loose', 'slim', 'relaxed', 'tailored', 
-                    'tight', 'baggy', 'regular fit', 'structured', 'flowy'
-                ],
-                'color_terms': [
-                    'black', 'white', 'red', 'blue', 'hitam', 'putih', 'netral', 
-                    'beige', 'navy', 'pink', 'warna', 'neutral', 'neutral colors',
-                    'bright colors', 'pastel', 'pastels', 'earth tones'
-                ],
-                'occasion_terms': [
-                    'work', 'casual', 'party', 'wedding', 'everyday', 'sehari-hari', 
-                    'office', 'formal event', 'casual everyday', 'work office',
-                    'special events', 'mixed occasions'
-                ],
-                'activity_terms': [
-                    'office worker', 'student', 'teacher', 'work from home', 'remote work',
-                    'travel', 'active lifestyle', 'gym', 'sports', 'outdoor activities',
-                    'sedentary', 'desk job', 'standing job', 'retail', 'healthcare',
-                    'business meetings', 'social events', 'freelancer', 'entrepreneur',
-                    'stay at home', 'retired', 'part time', 'full time', 'shift work',
-                    'pekerja kantoran', 'mahasiswa', 'guru', 'kerja dari rumah',
-                    'sering traveling', 'aktif bergerak', 'olahraga', 'aktivitas outdoor',
-                    'banyak duduk', 'kerja berdiri', 'sering meeting', 'acara sosial'
-                ]
-            }
-        
-        # Check accumulated keywords with more flexible matching
-        if accumulated_keywords:
-            for keyword, data in accumulated_keywords.items():
-                if keyword is None:
-                    continue
-                    
-                weight = data.get("weight", 0) if isinstance(data, dict) else data
-                if weight > 300:  # Threshold for significant preferences
-                    keyword_lower = str(keyword).lower()
-                    
-                    # More flexible matching - exact match OR contains
-                    for category, terms in term_categories.items():
-                        category_match = False
-                        for term in terms:
-                            if (term == keyword_lower or 
-                                term in keyword_lower or 
-                                keyword_lower in term):
-                                category_match = True
-                                break
-                        
-                        if category_match:
-                            if category == 'body_terms':
-                                known_info['body_info'] = True
-                                detected_preferences.append(f"body: {keyword}")
-                            elif category == 'activity_terms':  # NEW: Activity detection
-                                known_info['daily_activity'] = True
-                                detected_preferences.append(f"activity: {keyword}")
-                            elif category == 'sleeve_terms':
-                                known_info['sleeves'] = True
-                                detected_preferences.append(f"sleeves: {keyword}")
-                            elif category == 'style_terms':
-                                known_info['style'] = True
-                                detected_preferences.append(f"style: {keyword}")
-                            elif category == 'clothing_terms':
-                                known_info['clothing'] = True
-                                detected_preferences.append(f"clothing: {keyword}")
-                            elif category == 'fit_terms':
-                                known_info['fit'] = True
-                                detected_preferences.append(f"fit: {keyword}")
-                            elif category == 'color_terms':
-                                known_info['colors'] = True
-                                detected_preferences.append(f"colors: {keyword}")
-                            elif category == 'occasion_terms':
-                                known_info['occasions'] = True
-                                detected_preferences.append(f"occasions: {keyword}")
-                            break  # Stop checking other categories once matched
-        
-        return known_info, detected_preferences
-    
-    def _all_essential_questions_asked(self, session_id):
-        """UPDATED: Check if all essential questions including daily activity have been asked"""
-        questions_asked = self._get_session_questions(session_id)
-        
-        essential_questions = [
-            'gender_asked',
-            'body_info_asked',
-            'daily_activity_asked',  
-            'style_asked',
-            'clothing_asked',
-            'fit_asked',
-            'sleeves_asked',
-            'colors_asked',
-            'occasions_asked',
-            'budget_asked'
-        ]
-        
-        return all(questions_asked.get(q, False) for q in essential_questions)
-    
-    def should_reask_length_preferences(self, new_clothing_items, user_context):
-        """
-        Check if we should re-ask length preferences for new clothing types
-        """
-        
-        # Get existing length preferences
-        accumulated_keywords = user_context.get("accumulated_keywords", {})
-        existing_length_prefs = []
-        
-        for keyword, data in accumulated_keywords.items():
-            if keyword and FashionCategories.get_category(keyword) == 'length_terms':
-                weight = data.get("weight", 0) if isinstance(data, dict) else data
-                if weight > 1000:
-                    existing_length_prefs.append(keyword)
-        
-        # Check if new clothing types need different length considerations
-        clothing_length_relevance = {
-            'celana': ['panjang', 'pendek', 'long', 'short', 'ankle length', 'knee length'],
-            'pants': ['long', 'short', 'ankle length', 'knee length'],
-            'rok': ['mini', 'midi', 'maxi', 'knee length', 'ankle length'],
-            'skirt': ['mini', 'midi', 'maxi', 'knee length', 'ankle length'], 
-            'dress': ['mini', 'midi', 'maxi', 'knee length', 'ankle length'],
-            'gaun': ['mini', 'midi', 'maxi', 'knee length', 'ankle length'],
-            'kemeja': ['long', 'short', 'panjang', 'pendek'],
-            'shirt': ['long', 'short']
-        }
-        
-        for clothing_item in new_clothing_items:
-            relevant_lengths = clothing_length_relevance.get(clothing_item.lower(), [])
-            
-            # Check if existing length preferences are relevant for this clothing
-            has_relevant_length = any(
-                existing_length.lower() in [rl.lower() for rl in relevant_lengths]
-                for existing_length in existing_length_prefs
-            )
-            
-            if not has_relevant_length and relevant_lengths:
-                print(f"   📏 Should re-ask length for '{clothing_item}' - no relevant existing preferences")
-                return True, clothing_item
-        
-        return False, None
-    
-    async def analyze_consultation_state(self, user_input, user_context, session_id):
-        """
-        UPDATED: Analyze consultation state with daily activity question included
-        """
-        user_input_lower = user_input.lower().strip()
-        
-        # Get session tracking
-        questions_asked = self._get_session_questions(session_id)
-        
-        # PRIORITY 1: Check for explicit product requests
-        product_triggers = [
-            'show me products', 'tampilkan produk', 'carikan produk', 'show products',
-            'bisa saya lihat produk', 'lihat produk', 'rekomendasinya', 'rekomendasi',
-            'yes show me', 'ya tunjukkan', 'show me some products',
-            'ready for products', 'siap lihat produk', 'lanjut ke produk'
-        ]
-        
-        for trigger in product_triggers:
-            if trigger in user_input_lower:
-                print(f"🎯 PRODUCT TRIGGER: '{trigger}' → Going to products")
-                return "products"
-        
-        # PRIORITY 2: Check if user is responding to summary 
-        if user_context.get("awaiting_confirmation", False):
-            confirmation_type = user_context.get("confirmation_type", "summary")
-            
-            # More specific confirmation words
-            summary_confirmation_words = [
-                'this is correct', 'looks good', 'that\'s right', 'accurate', 
-                'yes this is right', 'benar', 'tepat', 'sesuai', 'iya benar',
-                'proceed', 'lanjut', 'looks accurate', 'this looks good', 
-                'terlihat bagus', 'bagus', 'cocok', 'betul', 'oke', 'sudah benar'
-            ]
-            
-            # Check for corrections/changes
-            correction_indicators = [
-                'change', 'correction', 'wrong', 'not right', 'actually', 
-                'should be', 'i meant', 'correct that', 'ubah', 'salah',
-                'seharusnya', 'maksudnya', 'bukan', 'koreksi'
-            ]
-            
-            # If user wants to make corrections
-            if any(indicator in user_input_lower for indicator in correction_indicators):
-                print("✏️ User wants to make corrections → Stay in consultation")
-                user_context["awaiting_confirmation"] = False
-                return "consultation"
-            
-            # Check what type of confirmation this is
-            elif any(word in user_input_lower for word in summary_confirmation_words) or user_input_lower in ['yes', 'ya', 'iya', 'ok', 'okay']:
-                if confirmation_type == "summary":
-                    print("✅ User confirmed summary → Going to style recommendations")
-                    return "style_recommendations"
-                elif confirmation_type == "style_recommendations":
-                    print("✅ User confirmed style recommendations → Going to products")
-                    return "products"
-        
-        # PRIORITY 3: Check if all questions including daily activity have been asked
-        if self._all_essential_questions_asked(session_id) and not questions_asked.get('summary_shown', False):
-            print("📋 All questions including daily activity asked → Auto-show summary")
-            self._mark_question_asked(session_id, 'summary_shown')
-            return "summary"
-        
-        # PRIORITY 4: Continue with consultation if more questions needed
-        print("🔄 Continue consultation - more questions needed")
-        return "consultation"
-    
-    async def generate_consultation_response(self, user_input, user_context, session_id):
-        """
-        UPDATED: Added daily activity question after body info
-        """
-        
-        # Get current information
-        gender_data = user_context.get("user_gender", {})
-        gender = gender_data.get("category") if gender_data else None
-        accumulated_keywords = user_context.get("accumulated_keywords", {})
-        
-        # Get session-specific questions tracking
-        questions_asked = self._get_session_questions(session_id)
-        
-        # Categorize what we know
-        known_info, detected_preferences = self._categorize_keywords(accumulated_keywords)
-        known_info['gender'] = gender is not None and gender != "not specified"
-        
-        # Build acknowledgment for user's response
-        acknowledgment = ""
-        if detected_preferences and len(detected_preferences) > 0:
-            acknowledgment = "Perfect! "
-        
-        # Handle correction requests
-        correction_indicators = [
-            'change', 'correction', 'wrong', 'not right', 'actually', 
-            'should be', 'i meant', 'correct that', 'ubah', 'salah'
-        ]
-        
-        if any(indicator in user_input.lower() for indicator in correction_indicators):
-            return """I'd be happy to help you correct any information! What would you like to change?
-
-You can say things like:
-- "Change my style to casual" 
-- "Actually I prefer fitted clothes"
-- "My body type is hourglass"
-- "I want long sleeves instead"
-- "My budget is actually 200rb"
-- "I'm a student, not an office worker"
-
-What would you like to update?"""
-        
-        # Auto-detect clothing from keywords
-        if not questions_asked.get('clothing_asked', False):
-            detected_clothing = self._detect_clothing_from_keywords(accumulated_keywords)
-            if detected_clothing:
-                self._mark_question_asked(session_id, 'clothing_asked')
-                print(f"✅ Auto-marked clothing_asked=True due to detected clothing: {detected_clothing}")
-                known_info['clothing'] = True
-        
-        # ASK ALL QUESTIONS IN SEQUENCE - INCLUDING DAILY ACTIVITY
-        
-        # 1. GENDER (ALWAYS FIRST)
-        if not known_info['gender'] and not questions_asked['gender_asked']:
-            self._mark_question_asked(session_id, 'gender_asked')
-            return "Hi! I'd love to help you find the perfect fashion items. First, could you let me know your gender? This helps me suggest the right fits and styles for you. (You can say 'male', 'female', 'man', 'woman', etc.)"
-        
-        # 2. BODY INFORMATION
-        elif known_info['gender'] and not questions_asked['body_info_asked']:
-            self._mark_question_asked(session_id, 'body_info_asked')
-            return f"""{acknowledgment}Now to recommend the perfect fit, could you share some body information?
-
-**Body Type** (if comfortable): 
-- Pear shape (hips wider than shoulders)
-- Apple shape (fuller midsection) 
-- Hourglass (balanced shoulders and hips)
-- Rectangle (similar measurements)
-- Athletic build (broader shoulders)
-
-**OR Height & Weight** (for size guidance):
-- Example: "I'm 160cm, 55kg" or "I'm petite" or "I'm tall"
-
-This helps me suggest clothes that will look amazing on you! 😊"""
-        
-        # 3. DAILY ACTIVITY (NEW - AFTER BODY INFO)
-        elif not questions_asked['daily_activity_asked']:
-            self._mark_question_asked(session_id, 'daily_activity_asked')
-            return f"""{acknowledgment}What's your daily activity or lifestyle like?
-
-- **Office worker** (desk job, business meetings)
-- **Student** (classes, campus life)
-- **Work from home** (remote work, video calls)
-- **Active lifestyle** (gym, sports, outdoor activities)
-- **Retail/Service** (standing job, customer interaction)
-- **Healthcare/Teaching** (professional but active)
-- **Freelancer/Creative** (flexible schedule, varied activities)
-- **Stay at home** (household activities, errands)
-- **Mixed activities** (combination of the above)
-
-This helps me recommend clothes that suit your daily routine! 🏃‍♀️💼"""
-        
-        # 4. STYLE
-        elif not questions_asked['style_asked']:
-            self._mark_question_asked(session_id, 'style_asked')
-            return f"{acknowledgment}What's your overall style preference?\n- **Casual** (everyday, comfortable)\n- **Formal** (professional, dressy)\n- **Elegant** (sophisticated, classy)\n- **Minimalist** (simple, clean lines)\n- **Trendy** (fashionable, current styles)\n- **Vintage** (classic, retro styles)"
-        
-        # 5. CLOTHING TYPE
-        elif not questions_asked['clothing_asked']:
-            self._mark_question_asked(session_id, 'clothing_asked')
-            return f"{acknowledgment}What type of clothing are you most interested in?\n- **Shirts/Kemeja** (button-up, blouses)\n- **Dresses/Gaun** (casual, formal)\n- **Pants/Celana** (jeans, trousers)\n- **Skirts/Rok** (mini, midi, maxi)\n- **Blazers/Jackets** (formal, casual)\n- **Mixed** (various types)"
-        
-        # 6. FIT
-        elif not questions_asked['fit_asked']:
-            self._mark_question_asked(session_id, 'fit_asked')
-            return f"{acknowledgment}How do you like your clothes to fit?\n- **Oversized** (loose, roomy)\n- **Fitted** (follows your body shape)\n- **Relaxed** (comfortable with some room)\n- **Slim** (tailored, not too tight)\n- **Loose** (flowing, not form-fitting)"
-        
-        # 7. SLEEVES
-        elif not questions_asked['sleeves_asked']:
-            self._mark_question_asked(session_id, 'sleeves_asked')
-            return f"{acknowledgment}What sleeve length do you prefer?\n- **Long sleeves** (lengan panjang)\n- **Short sleeves** (lengan pendek)\n- **Sleeveless** (tank tops)\n- **3/4 sleeves** (between elbow and wrist)\n- **Mixed** (I like different lengths)"
-        
-        # 8. COLORS
-        elif not questions_asked['colors_asked']:
-            self._mark_question_asked(session_id, 'colors_asked')
-            return f"{acknowledgment}What colors do you usually prefer?\n- **Neutral colors** (black, white, beige, navy)\n- **Bright colors** (red, blue, pink)\n- **Earth tones** (brown, green, khaki)\n- **Pastels** (light colors)\n- **Mixed** (I like various colors)"
-        
-        # 9. OCCASIONS
-        elif not questions_asked['occasions_asked']:
-            self._mark_question_asked(session_id, 'occasions_asked')
-            return f"{acknowledgment}What occasions will you wear this for?\n- **Work/Office** (professional settings)\n- **Casual everyday** (shopping, meeting friends)\n- **Special events** (parties, dates)\n- **Mixed occasions** (various situations)"
-        
-        # 10. BUDGET (FINAL QUESTION)
-        elif not questions_asked['budget_asked']:
-            self._mark_question_asked(session_id, 'budget_asked')
-            return f"""{acknowledgment}Finally, what's your budget range for clothing items?
-
-- **Under 100rb** (budget-friendly options)
-- **100rb - 300rb** (affordable range)
-- **300rb - 500rb** (mid-range)
-- **500rb - 1jt** (premium range)
-- **Above 1jt** (luxury range)
-- **No specific budget** (show me all options)
-
-This helps me show you products within your comfortable price range! 💰"""
-        
-        # 11. ALL QUESTIONS ASKED - Trigger summary
-        else:
-            return "TRIGGER_SUMMARY"
-                
-# FIXED: Generate consultation summary (simpler and clearer)
-async def generate_consultation_summary_llm(user_context, user_language, session_id):
-    """
-    ENHANCED: Summary generation with proper keyword categorization including daily activity
-    """
-    
-    # Get the CURRENT gender from user_context
-    gender_data = user_context.get("user_gender", {})
-    current_gender = gender_data.get("category", "Not specified")
-    
-    # Log gender information for debugging
-    print(f"\n📊 SUMMARY GENERATION - GENDER CHECK:")
-    print(f"   Current gender in context: {current_gender}")
-    print(f"   Gender data: {gender_data}")
-    
-    accumulated_keywords = user_context.get("accumulated_keywords", {})
-    budget_range = user_context.get("budget_range", None)
-    
-    # Initialize preference lists INCLUDING daily activities
-    style_preferences = []
-    clothing_interests = []
-    fit_preferences = []
-    sleeve_preferences = []
-    color_preferences = []
-    occasion_needs = []
-    body_info = []
-    length_preferences = []
-    neckline_preferences = []
-    material_preferences = []
-    daily_activities = []  # NEW: Daily activity list
-    
-    print(f"\n🎨 ENHANCED SUMMARY GENERATION WITH DAILY ACTIVITY:")
-    print("=" * 60)
-    
-    # ENHANCED: Better keyword categorization logic including daily activities
-    for keyword, data in accumulated_keywords.items():
-        if keyword is None:
-            continue
-            
-        weight = data.get("weight", 0) if isinstance(data, dict) else data
-        source = data.get("source", "unknown") if isinstance(data, dict) else "unknown"
-        
-        # Use lower threshold for summary to capture more details
-        if source == "consultation":
-            threshold = 100
-        elif source == "user_input":
-            threshold = 500
-        else:
-            threshold = 1000
-        
-        print(f"🔍 Analyzing: '{keyword}' → Weight: {weight:.0f}, Source: {source}")
-        
-        if weight > threshold:
-            keyword_lower = str(keyword).lower()
-            
-            # ENHANCED: More precise categorization logic including daily activities
-            categorized = False
-            
-            # 1. BODY TERMS - Check first (most specific)
-            if not categorized:
-                for body_term in FashionCategories.BODY_TERMS:
-                    if (body_term.lower() == keyword_lower or 
-                        body_term.lower() in keyword_lower or 
-                        keyword_lower in body_term.lower()):
-                        body_info.append(keyword)
-                        print(f"   ✅ BODY: '{keyword}' (matched: {body_term})")
-                        categorized = True
-                        break
-            
-            # 2. DAILY ACTIVITY TERMS - NEW: Check for activity terms
-            if not categorized:
-                for activity_term in FashionCategories.ACTIVITY_TERMS:
-                    if (activity_term.lower() == keyword_lower or 
-                        activity_term.lower() in keyword_lower or 
-                        keyword_lower in activity_term.lower()):
-                        daily_activities.append(keyword)
-                        print(f"   ✅ DAILY ACTIVITY: '{keyword}' (matched: {activity_term})")
-                        categorized = True
-                        break
-            
-            # 3. SLEEVE TERMS
-            if not categorized:
-                for sleeve_term in FashionCategories.SLEEVE_TERMS:
-                    if (sleeve_term.lower() == keyword_lower or 
-                        sleeve_term.lower() in keyword_lower or 
-                        keyword_lower in sleeve_term.lower()):
-                        sleeve_preferences.append(keyword)
-                        print(f"   ✅ SLEEVES: '{keyword}' (matched: {sleeve_term})")
-                        categorized = True
-                        break
-            
-            # 4. CLOTHING TERMS
-            if not categorized:
-                for clothing_term in FashionCategories.CLOTHING_TERMS:
-                    if (clothing_term.lower() == keyword_lower or 
-                        clothing_term.lower() in keyword_lower or 
-                        keyword_lower in clothing_term.lower()):
-                        clothing_interests.append(keyword)
-                        print(f"   ✅ CLOTHING: '{keyword}' (matched: {clothing_term})")
-                        categorized = True
-                        break
-            
-            # 5. FIT TERMS
-            if not categorized:
-                for fit_term in FashionCategories.FIT_TERMS:
-                    if (fit_term.lower() == keyword_lower or 
-                        fit_term.lower() in keyword_lower or 
-                        keyword_lower in fit_term.lower()):
-                        fit_preferences.append(keyword)
-                        print(f"   ✅ FIT: '{keyword}' (matched: {fit_term})")
-                        categorized = True
-                        break
-            
-            # 6. LENGTH TERMS
-            if not categorized:
-                for length_term in FashionCategories.LENGTH_TERMS:
-                    if (length_term.lower() == keyword_lower or 
-                        length_term.lower() in keyword_lower or 
-                        keyword_lower in length_term.lower()):
-                        length_preferences.append(keyword)
-                        print(f"   ✅ LENGTH: '{keyword}' (matched: {length_term})")
-                        categorized = True
-                        break
-            
-            # 7. STYLE TERMS
-            if not categorized:
-                for style_term in FashionCategories.STYLE_TERMS:
-                    if (style_term.lower() == keyword_lower or 
-                        style_term.lower() in keyword_lower or 
-                        keyword_lower in style_term.lower()):
-                        style_preferences.append(keyword)
-                        print(f"   ✅ STYLE: '{keyword}' (matched: {style_term})")
-                        categorized = True
-                        break
-            
-            # 8. OCCASION TERMS - Check before color terms (important!)
-            if not categorized:
-                for occasion_term in FashionCategories.OCCASION_TERMS:
-                    if (occasion_term.lower() == keyword_lower or 
-                        occasion_term.lower() in keyword_lower or 
-                        keyword_lower in occasion_term.lower()):
-                        occasion_needs.append(keyword)
-                        print(f"   ✅ OCCASIONS: '{keyword}' (matched: {occasion_term})")
-                        categorized = True
-                        break
-                
-                # SPECIAL: Handle compound occasion terms
-                if not categorized and ('occasion' in keyword_lower or 'event' in keyword_lower):
-                    occasion_needs.append(keyword)
-                    print(f"   ✅ OCCASIONS: '{keyword}' (compound occasion term)")
-                    categorized = True
-            
-            # 9. COLOR TERMS - Check after occasions to avoid conflicts
-            if not categorized:
-                # First check specific color terms
-                for color_term in FashionCategories.COLOR_TERMS:
-                    if (color_term.lower() == keyword_lower or 
-                        color_term.lower() in keyword_lower or 
-                        keyword_lower in color_term.lower()):
-                        # FIXED: Avoid occasion terms being categorized as colors
-                        if 'occasion' not in keyword_lower and 'event' not in keyword_lower and 'activity' not in keyword_lower:
-                            color_preferences.append(keyword)
-                            print(f"   ✅ COLORS: '{keyword}' (matched: {color_term})")
-                            categorized = True
-                            break
-                
-                # Check color categories from mapping
-                if not categorized and FashionCategories.is_color_category(keyword_lower):
-                    color_preferences.append(keyword)
-                    print(f"   ✅ COLORS: '{keyword}' (color category)")
-                    categorized = True
-            
-            # 10. NECKLINE TERMS
-            if not categorized:
-                for neckline_term in FashionCategories.NECKLINE_TERMS:
-                    if (neckline_term.lower() == keyword_lower or 
-                        neckline_term.lower() in keyword_lower or 
-                        keyword_lower in neckline_term.lower()):
-                        neckline_preferences.append(keyword)
-                        print(f"   ✅ NECKLINE: '{keyword}' (matched: {neckline_term})")
-                        categorized = True
-                        break
-            
-            # 11. MATERIAL TERMS
-            if not categorized:
-                for material_term in FashionCategories.MATERIAL_TERMS:
-                    if (material_term.lower() == keyword_lower or 
-                        material_term.lower() in keyword_lower or 
-                        keyword_lower in material_term.lower()):
-                        material_preferences.append(keyword)
-                        print(f"   ✅ MATERIAL: '{keyword}' (matched: {material_term})")
-                        categorized = True
-                        break
-            
-            # If still not categorized, log it
-            if not categorized:
-                print(f"   ❓ UNCATEGORIZED: '{keyword}' - unable to classify")
-        else:
-            print(f"   ⏭️ BELOW THRESHOLD: '{keyword}' (weight: {weight})")
-    
-    # Clean and deduplicate preferences
-    def clean_preferences(pref_list, max_items=3):
-        """Remove duplicates and limit to max items"""
-        seen = set()
-        cleaned = []
-        for item in pref_list:
-            item_lower = item.lower()
-            if item_lower not in seen and len(cleaned) < max_items:
-                seen.add(item_lower)
-                cleaned.append(item)
-        return cleaned
-    
-    # Apply cleaning INCLUDING daily activities
-    body_info = clean_preferences(body_info, 2)
-    daily_activities = clean_preferences(daily_activities, 3)  # NEW: Clean daily activities
-    sleeve_preferences = clean_preferences(sleeve_preferences, 2)
-    style_preferences = clean_preferences(style_preferences, 3)
-    clothing_interests = clean_preferences(clothing_interests, 3)
-    fit_preferences = clean_preferences(fit_preferences, 2)
-    color_preferences = clean_preferences(color_preferences, 3)
-    occasion_needs = clean_preferences(occasion_needs, 3)
-    length_preferences = clean_preferences(length_preferences, 2)
-    neckline_preferences = clean_preferences(neckline_preferences, 2)
-    material_preferences = clean_preferences(material_preferences, 2)
-    
-    # DEBUGGING: Print final categorized lists INCLUDING daily activities
-    print(f"\n📋 FINAL CATEGORIZED PREFERENCES:")
-    print(f"   Body Info: {body_info}")
-    print(f"   Daily Activities: {daily_activities}")  # NEW: Debug daily activities
-    print(f"   Style: {style_preferences}")
-    print(f"   Clothing: {clothing_interests}")
-    print(f"   Fit: {fit_preferences}")
-    print(f"   Sleeves: {sleeve_preferences}")
-    print(f"   Length: {length_preferences}")
-    print(f"   Colors: {color_preferences}")
-    print(f"   Occasions: {occasion_needs}")
-    print(f"   Necklines: {neckline_preferences}")
-    print(f"   Materials: {material_preferences}")
-    
-    # Format budget information
-    budget_text = "Not specified"
-    if budget_range:
-        if isinstance(budget_range, tuple):
-            min_price, max_price = budget_range
-            if min_price and max_price:
-                budget_text = f"IDR {min_price:,} - IDR {max_price:,}"
-            elif max_price:
-                budget_text = f"Under IDR {max_price:,}"
-            elif min_price:
-                budget_text = f"Above IDR {min_price:,}"
-        elif budget_range == "NO_LIMIT":
-            budget_text = "No specific budget limit"
-    
-    # Create summary with proper categorization INCLUDING daily activities
-    print(f"📊 FINAL GENDER FOR SUMMARY: '{current_gender}'")
-    
-    summary = f"""**YOUR FASHION PROFILE** ✨
-
-Based on our conversation, here's your complete style profile:
-
-**Personal Information:**
-- **Gender:** {current_gender.title() if current_gender != "Not specified" else "Not specified"}
-- **Body Information:** {', '.join(body_info) if body_info else 'Not specified'}
-- **Daily Activity/Lifestyle:** {', '.join(daily_activities) if daily_activities else 'Not specified'}
-- **Budget Range:** {budget_text}
-
-**Style Preferences:**
-- **Overall Style:** {', '.join(style_preferences) if style_preferences else 'Not specified'}
-- **Clothing Types:** {', '.join(clothing_interests) if clothing_interests else 'Not specified'}
-- **Preferred Fit:** {', '.join(fit_preferences) if fit_preferences else 'Not specified'}
-- **Sleeve Preferences:** {', '.join(sleeve_preferences) if sleeve_preferences else 'Not specified'}
-- **Length Preferences:** {', '.join(length_preferences) if length_preferences else 'Not specified'}
-- **Color Preferences:** {', '.join(color_preferences) if color_preferences else 'Not specified'}
-- **Occasions:** {', '.join(occasion_needs) if occasion_needs else 'Not specified'}
-
----
-
-**WHAT'S NEXT:**
-
-🔧 **To make corrections:** Say "Change [item]" or "Actually I prefer [preference]" or "I am [gender]" or "I work as [job]"
-
-✅ **If this looks accurate:** Say "This looks good" or "Show me products" to see your personalized recommendations within your budget!
-
-I'm ready to find products that perfectly match your style, body type, daily activities, and budget! 🎯💰"""
-    
-    # Translate if needed
-    if user_language != "en":
-        try:
-            summary = translate_text(summary, user_language, session_id)
-        except Exception as e:
-            print(f"Translation error: {e}")
-    
-    return summary
-
-# FIXED: Handle message function with better logic
-async def handle_message_with_hybrid_intelligence(user_input, session_id, user_context, db, user_language):
-    """
-    ENHANCED: Better gender change handling in message processing
-    """
-    
-    print(f"\n🌍 MESSAGE PROCESSING WITH GENDER CHANGE DETECTION")
-    print("="*60)
-    print(f"   User language detected: '{user_language}'")
-    print(f"   User input: '{user_input[:100]}...'")
-    
-    # Always translate first
-    if user_language != "en":
-        print(f"🔄 Translating user input from '{user_language}' to English...")
-        translated_input = translate_text(user_input, "en", session_id)
-        print(f"   Translated input: '{translated_input[:100]}...'")
-    else:
-        translated_input = user_input
-        print(f"✅ Input already in English, no translation needed")
-
-    # PRIORITY: Check for gender changes FIRST before other processing
-    old_gender = user_context.get("user_gender", {}).get("category", None)
-    detected_gender = detect_and_update_gender(translated_input, user_context)
-    new_gender = user_context.get("user_gender", {}).get("category", None)
-    
-    # Check if gender actually changed
-    if old_gender != new_gender and new_gender is not None:
-        print(f"🔄 GENDER CHANGE DETECTED: {old_gender} → {new_gender}")
-        
-        # Reset certain consultation questions if gender changed
-        questions_asked = consultation_manager._get_session_questions(session_id)
-        questions_asked['summary_shown'] = False  # Allow new summary
-        
-        # Optional: Reset body info question to get gender-appropriate guidance
-        if old_gender is not None:  # Only reset if this was a change, not first detection
-            questions_asked['body_info_asked'] = False
-            print(f"   🔄 Reset body_info_asked due to gender change")
-        
-        # Create acknowledgment message for gender change
-        if old_gender is not None:
-            if user_language != "en":
-                gender_change_msg = translate_text(
-                    f"Thank you for the correction! I've updated your gender to {new_gender}. This helps me provide better fashion recommendations for you.",
-                    user_language, session_id
-                )
-            else:
-                gender_change_msg = f"Thank you for the correction! I've updated your gender to {new_gender}. This helps me provide better fashion recommendations for you."
-            
-            return gender_change_msg, False
-
-    # Check for clothing changes
-    is_clothing_change, new_clothing_list = detect_clothing_change_in_input(user_input, user_context)
-
-    if is_clothing_change and new_clothing_list:
-        print(f"🔄 CLOTHING CHANGE DETECTED: {new_clothing_list}")
-        
-        # Handle clothing changes (existing logic)
-        user_input_lower = user_input.lower()
-        is_only_request = any(only_word in user_input_lower for only_word in 
-                             ['only', 'just', 'hanya', 'cuma', 'aja', 'saja'])
-        
-        accumulated_keywords = user_context.get("accumulated_keywords", {})
-        
-        if is_only_request:
-            print(f"   🎯 ONLY REQUEST: Replacing ALL clothing with {new_clothing_list}")
-            clothing_items_to_remove = []
-            for keyword, data in list(accumulated_keywords.items()):
-                if keyword and FashionCategories.get_category(keyword) == 'clothing_terms':
-                    clothing_items_to_remove.append(keyword)
-            
-            for old_clothing in clothing_items_to_remove:
-                if old_clothing in accumulated_keywords:
-                    del accumulated_keywords[old_clothing]
-                    print(f"   🗑️ REMOVED OLD CLOTHING: '{old_clothing}' (only request)")
-        else:
-            print(f"   ➕ ADDITION REQUEST: Adding {new_clothing_list} to existing")
-            clothing_items_to_remove = []
-            for keyword, data in list(accumulated_keywords.items()):
-                if keyword and FashionCategories.get_category(keyword) == 'clothing_terms':
-                    if not any(keyword.lower() == new_item.lower() for new_item in new_clothing_list):
-                        clothing_items_to_remove.append(keyword)
-            
-            for old_clothing in clothing_items_to_remove:
-                if old_clothing in accumulated_keywords:
-                    del accumulated_keywords[old_clothing]
-                    print(f"   🗑️ REMOVED OLD CLOTHING: '{old_clothing}' (not in new list)")
-        
-        user_context["accumulated_keywords"] = accumulated_keywords
-        
-        # Add new clothing items
-        for new_clothing in new_clothing_list:
-            new_clothing_keywords = [(new_clothing, 50000)]
-            update_accumulated_keywords(
-                new_clothing_keywords, 
-                user_context, 
-                user_input,
-                is_user_input=True, 
-                is_consultation=True
-            )
-            print(f"   ✅ ADDED NEW CLOTHING: '{new_clothing}'")
-        
-        # Reset summary
-        questions_asked = consultation_manager._get_session_questions(session_id)
-        questions_asked['summary_shown'] = False
-        
-        print(f"   ✅ Updated clothing list - continuing with consultation")
-    
-    # Extract and update keywords
-    accumulated_keywords = [(k, v.get("weight", 0) if isinstance(v, dict) else v) 
-                          for k, v in user_context.get("accumulated_keywords", {}).items()]
-    
-    # Mark consultation phase keywords specifically
-    is_in_consultation = not consultation_manager._all_essential_questions_asked(session_id)
-    
-    new_keywords = await extract_ranked_keywords("", translated_input, accumulated_keywords)
-    
-    print(f"🔄 EXTRACTED KEYWORDS: {[(kw, score) for kw, score in new_keywords[:5]]}")
-    
-    # Mark as consultation keywords if we're still in consultation phase
-    update_accumulated_keywords(new_keywords, user_context, user_input, 
-                              is_user_input=True, is_consultation=is_in_consultation)
-    
-    # Analyze consultation state
-    consultation_state = await consultation_manager.analyze_consultation_state(
-        user_input, user_context, session_id
-    )
-    
-    print(f"🧠 Consultation state: {consultation_state}")
-    print(f"🔍 User input: '{user_input}'")
-    print(f"📋 Awaiting confirmation: {user_context.get('awaiting_confirmation', False)}")
-    
-    # Handle consultation responses
-    if consultation_state == "consultation":
-        consultation_response = await consultation_manager.generate_consultation_response(
-            user_input, user_context, session_id
-        )
-        
-        if consultation_response == "TRIGGER_SUMMARY":
-            summary_response = await generate_consultation_summary_llm(user_context, user_language, session_id)
-            user_context["awaiting_confirmation"] = True
-            user_context["confirmation_type"] = "summary"
-            
-            summary_html = render_markdown(summary_response)
-            return summary_html, False
-        
-        if user_language != "en":
-            print(f"🔄 Translating consultation response from English to '{user_language}'...")
-            try:
-                translated_consultation = translate_text(consultation_response, user_language, session_id)
-                print(f"✅ Consultation translation successful")
-                consultation_response = translated_consultation
-            except Exception as e:
-                print(f"❌ Consultation translation failed: {e}")
-        
-        consultation_html = render_markdown(consultation_response)
-        return consultation_html, False
-    
-    elif consultation_state == "style_recommendations":
-        print("🎨 STYLE RECOMMENDATIONS STATE: Generating AI style advice")
-        
-        style_response = await generate_style_recommendations_from_consultation(user_context, user_language, session_id)
-        
-        style_keywords = await extract_ranked_keywords(style_response, "", [])
-        update_accumulated_keywords(style_keywords, user_context, user_input, 
-                                  is_ai_response=True, is_consultation=False)
-        
-        user_context["confirmation_type"] = "style_recommendations"
-        user_context["awaiting_confirmation"] = True
-        
-        style_html = render_markdown(style_response)
-        return style_html, False
-    
-    elif consultation_state == "summary":
-        summary_response = await generate_consultation_summary_llm(user_context, user_language, session_id)
-        user_context["confirmation_type"] = "summary"
-        user_context["awaiting_confirmation"] = True
-        
-        summary_html = render_markdown(summary_response)
-        return summary_html, False
-    
-    elif consultation_state == "products":
-        user_context["awaiting_confirmation"] = False
-        print("🛍️ PRODUCTS STATE: Triggering product search with consultation priority")
-        return "TRIGGER_PRODUCT_SEARCH", True
-    
-    else:
-        # Fallback to consultation
-        consultation_response = await consultation_manager.generate_consultation_response(
-            user_input, user_context, session_id
-        )
-        
-        if user_language != "en":
-            try:
-                translated_consultation = translate_text(consultation_response, user_language, session_id)
-                consultation_response = translated_consultation
-            except Exception as e:
-                print(f"❌ Fallback consultation translation failed: {e}")
-        
-        consultation_html = render_markdown(consultation_response)
-        return consultation_html, False
-                            
-def get_enhanced_keywords_for_product_search(user_context):
-    """
-    NEW: Get keywords prioritized for product search with consultation preferences boosted
-    """
-    accumulated_keywords = user_context.get("accumulated_keywords", {})
-    
-    enhanced_keywords = []
-    
-    for keyword, data in accumulated_keywords.items():
-        if isinstance(data, dict):
-            base_weight = data.get("weight", 0)
-            is_consultation = data.get("consultation_priority", False)
-            source = data.get("source", "unknown")
-            
-            # MASSIVE boost for consultation keywords
-            if is_consultation or source == "consultation":
-                final_weight = base_weight * 5.0  # 5x boost for consultation
-                print(f"   🔥 CONSULTATION BOOST: '{keyword}' → {final_weight:.0f} (was {base_weight:.0f})")
-            else:
-                final_weight = base_weight
-            
-            enhanced_keywords.append((keyword, final_weight))
-        else:
-            # Handle legacy format
-            enhanced_keywords.append((keyword, data))
-    
-    # Sort by enhanced weights
-    enhanced_keywords.sort(key=lambda x: x[1], reverse=True)
-    
-    print(f"\n🎯 ENHANCED KEYWORDS FOR PRODUCT SEARCH:")
-    for i, (kw, weight) in enumerate(enhanced_keywords[:15]):
-        source_info = accumulated_keywords.get(kw, {})
-        if isinstance(source_info, dict):
-            source = source_info.get("source", "unknown")
-            is_consultation = source_info.get("consultation_priority", False)
-            priority_marker = "🔥" if is_consultation else "⚪"
-        else:
-            priority_marker = "⚪"
-            source = "legacy"
-        
-        print(f"   {i+1:2d}. {priority_marker} '{kw}' → {weight:.0f} ({source})")
-    
-    return enhanced_keywords[:15]
-
-async def enhanced_product_search_in_websocket(user_context, db, user_language, session_id):
-    """
-    ENHANCED: Product search with consultation keyword prioritization
-    """
-    try:
-        # Get enhanced keywords with consultation boost
-        enhanced_keywords = get_enhanced_keywords_for_product_search(user_context)
-        
-        # Translate keywords if needed
-        if user_language != "en":
-            translated_keywords = []
-            for kw, score in enhanced_keywords:
-                try:
-                    translated_kw = translate_text(kw, "en", session_id)
-                    translated_keywords.append((translated_kw, score))
-                except:
-                    translated_keywords.append((kw, score))
-        else:
-            translated_keywords = enhanced_keywords
-
-        # Get user gender and budget for filtering
-        user_gender = user_context.get("user_gender", {}).get("category", None)
-        budget_range = user_context.get("budget_range", None)
-        
-        # Enhanced confirmation message
-        positive_response = "🧠 **Enhanced AI Search Results** - Here are products that perfectly match your consultation preferences and style recommendations:"
-        
-        if budget_range:
-            min_price, max_price = budget_range
-            if min_price and max_price:
-                budget_text = f" (within your budget of IDR {min_price:,} - IDR {max_price:,})"
-            elif max_price:
-                budget_text = f" (under IDR {max_price:,})"
-            else:
-                budget_text = ""
-            positive_response += budget_text
-
-        if user_language != "en":
-            positive_response = translate_text(positive_response, user_language, session_id)
-        
-        # Use enhanced product search with consultation-boosted keywords
-        recommended_products = await fetch_products_from_db(
-            db=db,
-            top_keywords=translated_keywords,
-            max_results=15,
-            gender_category=user_gender,
-            budget_range=budget_range
-        )
-        
-        return recommended_products, positive_response
-        
-    except Exception as e:
-        logging.error(f"Error in enhanced product search: {str(e)}")
-        return pd.DataFrame(), "I'm sorry, I couldn't fetch product recommendations."
-                
-# Make sure initialization is correct
-hybrid_extractor = HybridKeywordExtractor(openai)
-consultation_manager = SmartConsultationManager(openai, hybrid_extractor)
-
-# ================================
-# EXISTING CLASSES
-# ================================
-
-class FashionSemanticSystem:
-    """
-    Enhanced semantic understanding system for fashion recommendations
-    Integrates with your existing keyword system
-    """
-    
-    def __init__(self):
-        self.model = None
-        self.product_embeddings = {}
-        self.product_cache = {}
-        self.embedding_cache = {}
-        self.cultural_context = self._build_indonesian_fashion_context()
-        self.fashion_vocabulary = self._build_fashion_vocabulary()
-        self.initialize_model()
-    
-    def initialize_model(self):
-        """Initialize the best available model for fashion understanding"""
-        if SENTENCE_TRANSFORMERS_AVAILABLE:
-            try:
-                # Try multilingual model first (supports Indonesian)
-                self.model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
-                print("✅ Loaded multilingual sentence transformer for Indonesian support")
-                return
-            except Exception as e:
-                print(f"⚠️ Failed to load multilingual model: {e}")
-                try:
-                    # Fallback to English model
-                    self.model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-                    print("✅ Loaded English sentence transformer")
-                    return
-                except Exception as e:
-                    print(f"⚠️ Failed to load sentence transformer: {e}")
-        
-        print("⚠️ Using fallback TF-IDF approach")
-        self.model = None
-    
-    def _build_indonesian_fashion_context(self):
-        """Build Indonesian-specific fashion context"""
-        return {
-            'traditional_wear': {
-                'batik': ['traditional', 'cultural', 'patterned', 'formal', 'Indonesian'],
-                'kebaya': ['traditional', 'formal', 'elegant', 'cultural', 'Indonesian'],
-                'sarong': ['traditional', 'casual', 'comfortable', 'wrap']
-            },
-            'climate_appropriate': {
-                'tropical': ['lightweight', 'breathable', 'cotton', 'linen', 'airy'],
-                'humid': ['moisture-wicking', 'quick-dry', 'loose-fit', 'ventilated'],
-                'hot_weather': ['light colors', 'short sleeves', 'sun protection', 'UV resistant']
-            },
-            'body_types': {
-                'petite': ['asian fit', 'small frame', 'proportional', 'fitted'],
-                'average': ['standard fit', 'regular', 'balanced'],
-                'curvy': ['flattering cut', 'comfortable fit', 'accentuating']
-            },
-            'local_preferences': {
-                'modest': ['covered', 'conservative', 'appropriate', 'respectful'],
-                'hijab_friendly': ['loose fit', 'long sleeves', 'high neck', 'modest'],
-                'work_appropriate': ['professional', 'modest', 'formal', 'office-suitable']
-            }
-        }
-    
-    def _build_fashion_vocabulary(self):
-        """Enhanced Indonesian-English fashion vocabulary mapping"""
-        return {
-            # Clothing types
-            'kaos': ['shirt', 't-shirt', 'top', 'tee', 'casual shirt'],
-            'kemeja': ['shirt', 'blouse', 'dress shirt', 'button-up', 'formal shirt'],
-            'celana': ['pants', 'trousers', 'bottoms', 'slacks'],
-            'jaket': ['jacket', 'blazer', 'coat', 'outerwear'],
-            'gaun': ['dress', 'gown', 'frock'],
-            'rok': ['skirt', 'bottom'],
-            'sepatu': ['shoes', 'footwear', 'sneakers', 'boots'],
-            
-            # Styles
-            'kasual': ['casual', 'relaxed', 'informal', 'everyday'],
-            'formal': ['formal', 'business', 'professional', 'dressy'],
-            'santai': ['comfortable', 'leisure', 'relaxed', 'easy-going'],
-            'elegan': ['elegant', 'sophisticated', 'classy', 'refined'],
-            'tradisional': ['traditional', 'cultural', 'ethnic', 'heritage'],
-            'modern': ['modern', 'contemporary', 'current', 'trendy'],
-            
-            # Colors
-            'hitam': ['black', 'dark'],
-            'putih': ['white', 'cream', 'ivory'],
-            'merah': ['red', 'crimson', 'scarlet'],
-            'biru': ['blue', 'navy', 'azure'],
-            'hijau': ['green', 'emerald', 'olive'],
-            'kuning': ['yellow', 'gold', 'amber'],
-            
-            # Fits and styles
-            'longgar': ['loose', 'oversized', 'relaxed fit', 'baggy'],
-            'ketat': ['tight', 'fitted', 'slim', 'body-hugging'],
-            'pas': ['perfect fit', 'just right', 'well-fitted'],
-        }
-    
-    def preprocess_fashion_text(self, text: str, user_profile: Optional[Dict] = None) -> str:
-        """
-        CLEANER preprocessing - don't over-expand for semantic search
-        """
-        if not text:
-            return ""
-        
-        # Keep the original text clean
-        enhanced_text = text.lower().strip()
-        
-        # Only add direct translations, not expansions
-        main_translations = {
-            'blazer': 'blazer jas',
-            'jas': 'blazer jas', 
-            'kemeja': 'kemeja shirt',
-            'shirt': 'kemeja shirt',
-            'celana': 'celana pants',
-            'pants': 'celana pants',
-            'rok': 'rok skirt',
-            'skirt': 'rok skirt',
-            'dress': 'dress gaun',
-            'gaun': 'dress gaun'
-        }
-        
-        # Check if text contains any main clothing items
-        for indonesian, translation in main_translations.items():
-            if indonesian in enhanced_text:
-                enhanced_text = translation
-                break
-        
-        # DON'T add cultural context for semantic search - keep it focused
-        print(f"   🧹 CLEAN PREPROCESSING: '{text}' → '{enhanced_text}'")
-        return enhanced_text
-
-    def get_semantic_embedding(self, text: str, use_cache: bool = True) -> np.ndarray:
-        """Get semantic embedding for text with caching"""
-        if use_cache and text in self.embedding_cache:
-            return self.embedding_cache[text]
-        
-        if self.model and SENTENCE_TRANSFORMERS_AVAILABLE:
-            # Use sentence transformer
-            embedding = self.model.encode([text], convert_to_tensor=False)[0]
-        elif SKLEARN_AVAILABLE:
-            # Fallback to TF-IDF
-            if not hasattr(self, 'tfidf_vectorizer'):
-                self.tfidf_vectorizer = TfidfVectorizer(max_features=300, stop_words='english')
-                # Initialize with some fashion terms
-                sample_texts = [
-                    "casual shirt comfortable style",
-                    "formal dress elegant evening",
-                    "traditional batik indonesian culture",
-                    "modern minimalist design simple"
-                ]
-                self.tfidf_vectorizer.fit(sample_texts)
-            
-            embedding = self.tfidf_vectorizer.transform([text]).toarray()[0]
-        else:
-            # Very basic fallback - word overlap
-            words = set(text.lower().split())
-            fashion_terms = set(['shirt', 'dress', 'pants', 'casual', 'formal', 'style'])
-            overlap = len(words.intersection(fashion_terms))
-            embedding = np.array([overlap / max(len(words), 1)])
-        
-        if use_cache:
-            self.embedding_cache[text] = embedding
-        
-        return embedding
-    
-    def calculate_semantic_similarity(self, text1: str, text2: str) -> float:
-        """Calculate semantic similarity between two texts"""
-        emb1 = self.get_semantic_embedding(text1)
-        emb2 = self.get_semantic_embedding(text2)
-        
-        if len(emb1) != len(emb2):
-            return 0.0
-        
-        # Calculate cosine similarity
-        if np.linalg.norm(emb1) == 0 or np.linalg.norm(emb2) == 0:
-            return 0.0
-        
-        similarity = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
-        return float(similarity)
-
-# Initialize the semantic system
-semantic_system = FashionSemanticSystem()
-
-class EnhancedSemanticProductMatcher:
-    """
-    Improved version with persistent embedding storage
-    """
-    
-    def __init__(self, semantic_system: FashionSemanticSystem):
-        self.semantic_system = semantic_system
-        self.product_embeddings = {}
-        self.products_df = None
-        self.embeddings_cache_dir = "embeddings_cache"
-        self.embeddings_file = os.path.join(self.embeddings_cache_dir, "product_embeddings.pkl")
-        self.products_file = os.path.join(self.embeddings_cache_dir, "products_data.pkl")
-        self.metadata_file = os.path.join(self.embeddings_cache_dir, "metadata.pkl")
-        
-        # Create cache directory if it doesn't exist
-        os.makedirs(self.embeddings_cache_dir, exist_ok=True)
-
-    def clean_semantic_query(self, query):
-        """
-        Clean semantic query from noise
-        """
-        # Remove numbers and numbered items
-        cleaned = re.sub(r'\b\d+\b', '', query)
-        
-        # Remove action words that don't help matching
-        noise_words = ['carikan', 'tunjukkan', 'show', 'find', 'cari', 'aja', 'saja', 'only']
-        words = cleaned.split()
-        
-        filtered_words = []
-        for word in words:
-            if word.lower() not in noise_words and len(word) > 1:
-                filtered_words.append(word)
-        
-        # Keep only the first 3-4 relevant words to avoid confusion
-        result = ' '.join(filtered_words[:4])
-        return result.strip()
-
-    def matches_main_category(self, query, product):
-        """
-        Check if product matches the main category in query
-        """
-        query_lower = query.lower()
-        product_name_lower = product['product_name'].lower()
-        product_detail_lower = product['product_detail'].lower()
-        
-        # Define category matching rules
-        category_rules = {
-            'blazer': ['blazer', 'jas'],
-            'jas': ['blazer', 'jas'],
-            'shirt': ['shirt', 'kemeja'],
-            'kemeja': ['shirt', 'kemeja'],  
-            'pants': ['pants', 'celana', 'trouser'],
-            'celana': ['pants', 'celana', 'trouser'],
-            'skirt': ['skirt', 'rok'],
-            'rok': ['skirt', 'rok'],
-            'dress': ['dress', 'gaun'],
-            'gaun': ['dress', 'gaun']
-        }
-        
-        for main_term, valid_terms in category_rules.items():
-            if main_term in query_lower:
-                # Product must contain at least one valid term
-                if any(term in product_name_lower or term in product_detail_lower 
-                    for term in valid_terms):
-                    return True
-                else:
-                    return False  # Wrong category
-        
-        return True  # No specific category detected, allow all
-
-    async def preprocess_products(self, db: AsyncSession, force_refresh=False):
-        """
-        Create enhanced product descriptions for embedding with intelligent caching
-        """
-        print("\n🔄 SMART EMBEDDING PREPROCESSING")
-        print("="*50)
-        
-        try:
-            # Get current products from database
-            variant_subquery = (
-                select(
-                    ProductVariant.product_id,
-                    func.min(ProductVariant.product_price).label('min_price'),
-                    func.group_concat(ProductVariant.size.distinct()).label('available_sizes'),
-                    func.group_concat(ProductVariant.color.distinct()).label('available_colors'),
-                    func.sum(ProductVariant.stock).label('total_stock')
-                )
-                .where(ProductVariant.stock > 0)
-                .group_by(ProductVariant.product_id)
-                .subquery()
-            )
-            
-            query = (
-                select(
-                    Product.product_id, 
-                    Product.product_name, 
-                    Product.product_detail, 
-                    Product.product_seourl,
-                    Product.product_gender,
-                    variant_subquery.c.min_price,
-                    variant_subquery.c.available_sizes,
-                    variant_subquery.c.available_colors,
-                    variant_subquery.c.total_stock,
-                    ProductPhoto.productphoto_path
-                )
-                .select_from(Product)
-                .join(variant_subquery, Product.product_id == variant_subquery.c.product_id)
-                .join(ProductPhoto, Product.product_id == ProductPhoto.product_id)
-                .where(variant_subquery.c.total_stock > 0)
-            )
-            
-            result = await db.execute(query)
-            all_products = result.fetchall()
-            
-            if not all_products:
-                print("❌ No products found for preprocessing")
-                return
-            
-            print(f"📦 Found {len(all_products)} products in database")
-            
-            # Create DataFrame for products
-            product_data = []
-            for product_row in all_products:
-                product_data.append({
-                    "product_id": product_row[0],
-                    "product_name": product_row[1],
-                    "product_detail": product_row[2],
-                    "price": product_row[5],
-                    "gender": product_row[4],
-                    "sizes": product_row[6],
-                    "colors": product_row[7],
-                    "stock": product_row[8],
-                    "photo": product_row[9],
-                    "seourl": product_row[3]
-                })
-            
-            self.products_df = pd.DataFrame(product_data)
-            print(f"📋 Created product DataFrame with {len(self.products_df)} products")
-            
-        except Exception as e:
-            logging.error(f"Error in preprocess_products: {str(e)}")
-            print(f"❌ Error preprocessing products: {str(e)}")
-
-# Initialize enhanced product matcher
-enhanced_matcher = EnhancedSemanticProductMatcher(semantic_system)
-
-# ================================
-# DATABASE MODELS (UNCHANGED)
-# ================================
 
 class Product(Base):
     __tablename__ = "product"
@@ -2783,16 +108,12 @@ class ChatMessage(BaseModel):
 class ChatHistoryResponse(BaseModel):
     messages: List[ChatMessage]
 
-# ================================
-# UTILITY FUNCTIONS (KEEP EXISTING)
-# ================================
-
 async def create_tables():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 async def get_db():
-    async with AsyncSession(engine) as session:
+    async with AsyncSession(engine) as session:  # Updated to use AsyncSession
         yield session
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -2826,800 +147,1230 @@ if not spacy.tokens.Doc.has_extension("language"):
 
 nlp.add_pipe("language_detector", last=True)
 
-def get_mymemory_language_code(detected_language):
+stop_words = set([
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", 
+    "for", "if", "in", "into", "is", "it", "its", "of", "on", 
+    "or", "so", "such", "that", "the", "their", "then", 
+    "there", "these", "they", "this", "to", "too", "was", 
+    "will", "with", "you", "your", "do", "does", "did", 
+    "have", "has", "having", "we", "us", "our", "ours", 
+    "I", "me", "my", "mine", "he", "him", "his", "she", 
+    "her", "hers", "itself", "themselves", "yourself", 
+    "yourselves", "those", "from", "which", "or", "any", 
+    "all", "some", "each", "every", "one", "once", "while", 
+    "when", "where", "how", "what", "why", "about", "like", 
+    "over", "under", "more", "less", "up", "down", "out", 
+    "around", "just", "only", "even", "always", "never", 
+    "not", "can", "could", "should", "would", "might", 
+    "must", "shall", "may", "perhaps", "often", "sometimes",
+    "always", "usually", "great", "very", "really", "sure", "color", "colour",
+    "yang", "dan", "di", "ke", "dari", "pada", "untuk", "dengan", 
+    "sebagai", "adalah", "atau", "itu", "ini", "tidak", "bukan", 
+    "sudah", "belum", "akan", "masih", "juga", "hanya", "namun", 
+    "sangat", "lebih", "kurang", "ada", "dalam", "oleh", "karena", 
+    "tersebut", "kemudian", "jadi", "sehingga", "agar", "supaya", 
+    "bahwa", "kalau", "apa", "siapa", "bagaimana", "kapan", "dimana", 
+    "mengapa", "dengan", "tetapi", "meskipun", "sebab", "hingga", 
+    "untuk", "akan", "terhadap", "antara", "sesuatu", "kita", "kami", 
+    "mereka", "dia", "itu", "saya", "aku", "anda", "kau", "kamu", 
+    "nya", "lah", "pun", "lagi", "pernah", "sedang", "begitu", "seperti",
+    "saja", "hingga", "harus", "bisa", "dapat", "mungkin", "sering", 
+    "selalu", "jarang", "tampilan", "memberikan", "warna", "potongan", 
+    "sebuah", "pilih", "menarik", "pilihlah", "carikan", "gaya", "menjadi"
+])
+
+def enhance_keywords_with_mapping(keywords_list):
     """
-    Map detected language codes to MyMemoryTranslator supported formats
+    Enhance a list of keywords using the complete mapping function.
+    This can be called from extract_ranked_keywords to expand the keyword coverage.
     """
-    language_mapping = {
-        # Common language codes to MyMemoryTranslator format
-        'id': 'indonesian',      # Indonesian
-        'en': 'english',         # English  
-        'es': 'spanish',         # Spanish
-        'fr': 'french',          # French
-        'de': 'german',          # German
-        'it': 'italian',         # Italian
-        'pt': 'portuguese',      # Portuguese
-        'ru': 'russian',         # Russian
-        'ja': 'japanese',        # Japanese
-        'ko': 'korean',          # Korean
-        'zh': 'chinese simplified',  # Chinese
-        'ar': 'arabic',          # Arabic
-        'hi': 'hindi',           # Hindi
-        'th': 'thai',            # Thai
-        'vi': 'vietnamese',      # Vietnamese
-        'ms': 'malay',           # Malay
-        'tl': 'tagalog',         # Tagalog/Filipino
-        'nl': 'dutch',           # Dutch
-        'sv': 'swedish',         # Swedish
-        'da': 'danish',          # Danish
-        'no': 'norwegian bokmål', # Norwegian
-        'fi': 'finnish',         # Finnish
-        'pl': 'polish',          # Polish
-        'cs': 'czech',           # Czech
-        'sk': 'slovak',          # Slovak
-        'hu': 'hungarian',       # Hungarian
-        'ro': 'romanian',        # Romanian
-        'bg': 'bulgarian',       # Bulgarian
-        'hr': 'croatian',        # Croatian
-        'sr': 'serbian latin',   # Serbian
-        'sl': 'slovenian',       # Slovenian
-        'et': 'estonian',        # Estonian
-        'lv': 'latvian',         # Latvian
-        'lt': 'lithuanian',      # Lithuanian
-        'el': 'greek',           # Greek
-        'tr': 'turkish',         # Turkish
-        'he': 'hebrew',          # Hebrew
-        'fa': 'persian',         # Persian
-        'ur': 'urdu',            # Urdu
-        'bn': 'bengali',         # Bengali
-        'ta': 'tamil india',     # Tamil
-        'te': 'telugu',          # Telugu
-        'ml': 'malayalam',       # Malayalam
-        'kn': 'kannada',         # Kannada
-        'gu': 'gujarati',        # Gujarati
-        'pa': 'punjabi',         # Punjabi
-        'mr': 'marathi',         # Marathi
-        'ne': 'nepali',          # Nepali
-        'si': 'sinhala',         # Sinhala
-        'my': 'burmese',         # Burmese
-        'km': 'khmer',           # Khmer
-        'lo': 'lao',             # Lao
-        'ka': 'georgian',        # Georgian
-        'hy': 'armenian',        # Armenian
-        'az': 'azerbaijani',     # Azerbaijani
-        'kk': 'kazakh',          # Kazakh
-        'ky': 'kyrgyz',          # Kyrgyz
-        'uz': 'uzbek',           # Uzbek
-        'tg': 'tajik',           # Tajik
-        'mn': 'mongolian',       # Mongolian
-        'bo': 'tibetan',         # Tibetan
-        'ug': 'uyghur ug',       # Uyghur
-        'am': 'amharic',         # Amharic
-        'om': 'west central oromo',  # Oromo
-        'ti': 'tigrinya',        # Tigrinya
-        'so': 'somali',          # Somali
-        'sw': 'swahili',         # Swahili
-        'af': 'afrikaans',       # Afrikaans
+    enhanced_keywords = []
+    
+    for keyword in keywords_list:
+        if isinstance(keyword, tuple):
+            # If it's already a (keyword, weight) tuple
+            keyword_text, weight = keyword
+        else:
+            # If it's just a keyword string
+            keyword_text = keyword
+            weight = 1.0
+        
+        # Get all related terms for this keyword
+        search_terms = get_all_search_terms_for_extraction(keyword_text)
+        
+        # Add the original keyword with its weight
+        enhanced_keywords.append((keyword_text, weight))
+        
+        # Add related terms with slightly lower weight
+        for related_term in search_terms:
+            if related_term.lower() != keyword_text.lower():  # Don't duplicate
+                enhanced_keywords.append((related_term, weight * 0.8))  # 80% of original weight
+    
+    # Remove duplicates while preserving the highest weight for each keyword
+    keyword_weights = {}
+    for keyword, weight in enhanced_keywords:
+        keyword_lower = keyword.lower()
+        if keyword_lower not in keyword_weights:
+            keyword_weights[keyword_lower] = weight
+        else:
+            # Keep the higher weight
+            keyword_weights[keyword_lower] = max(keyword_weights[keyword_lower], weight)
+    
+    # Convert back to list of tuples
+    final_enhanced_keywords = [(keyword, weight) for keyword, weight in keyword_weights.items()]
+    
+    return final_enhanced_keywords
+
+def extract_ranked_keywords(ai_response: str = None, translated_input: str = None, accumulated_keywords=None):
+    """
+    ENHANCED: Context-aware keyword extraction with physical description filtering.
+    """
+    print("\n" + "="*60)
+    print("🔤 ENHANCED KEYWORD EXTRACTION WITH CONTEXT AWARENESS")
+    print("="*60)
+    
+    keyword_scores = {}
+    global_exclusions = set()
+
+    # Simple responses filter
+    simple_responses = {
+        "yes", "ya", "iya", "oke", "ok", "okay", "sure", "tentu",
+        "no", "tidak", "nope", "ga", "gak", "engga", "nah",
+        "good", "bagus", "nice", "baik", "great", "mantap",
+        "thanks", "terima", "kasih", "makasih", "thx"
     }
     
-    return language_mapping.get(detected_language.lower(), 'english')  # Default to English
-
-def translate_text(text, target_language, session_id=None):
-    """
-    FIXED: Enhanced translation with proper language mapping and error handling
-    """
-    try:
-        if not text or not text.strip():
-            print("⚠️ Translation skipped: Empty text")
-            return text
-        
-        # Detect source language
-        if session_id and session_id in session_manager.session_languages:
-            source_language_code = session_manager.session_languages[session_id]
-        else:
-            source_language_code = detect_language(text)
-            if session_id:
-                session_manager.session_languages[session_id] = source_language_code
-        
-        print(f"🔍 Language detection: '{source_language_code}' → target: '{target_language}'")
-        
-        # Skip translation if same language
-        if source_language_code == target_language:
-            print("✅ Same language detected, skipping translation")
-            return text
-        
-        # Map language codes to MyMemoryTranslator format
-        source_lang_name = get_mymemory_language_code(source_language_code)
-        target_lang_name = get_mymemory_language_code(target_language)
-        
-        print(f"🗺️ Language mapping: '{source_language_code}' → '{source_lang_name}', '{target_language}' → '{target_lang_name}'")
-        
-        # Attempt translation
-        translator = MyMemoryTranslator(source=source_lang_name, target=target_lang_name)
-        translated_text = translator.translate(text)
-        
-        print(f"✅ Translation successful: '{text[:50]}...' → '{translated_text[:50]}...'")
-        return translated_text
-
-    except Exception as e:
-        print(f"❌ Translation error: {e}")
-        print(f"   Source: '{source_language_code}' → Target: '{target_language}'")
-        print(f"   Mapped: '{source_lang_name}' → '{target_lang_name}'")
-        print(f"   Returning original text: '{text[:100]}...'")
-        return text  # Return original text if translation fails
-
-def generate_length_question_for_clothing(clothing_item, user_language="en"):
-    """
-    Generate specific length questions based on clothing type
-    """
+    # Initialize variables
+    current_input_categories = set()
+    wanted_items = []
+    context_items = []
     
-    clothing_lower = clothing_item.lower()
+    # Define clothing categories
+    clothing_categories = {
+        'kemeja': ['kemeja', 'shirt', 'blouse', 'blus'],
+        'celana': ['celana', 'pants', 'jeans', 'trousers', 'ankle pants'],
+        'dress': ['dress', 'gaun', 'terusan'],
+        'rok': ['rok', 'skirt'],
+        'jaket': ['jaket', 'jacket', 'blazer', 'coat'],
+        'kaos': ['kaos', 't-shirt', 'tshirt', 'tank'],
+        'atasan': ['atasan', 'top', 'blouse'],
+        'sweater': ['sweater', 'cardigan', 'hoodie']
+    }
     
-    if clothing_lower in ['celana', 'pants', 'trousers']:
-        question = f"""Perfect! I see you're interested in **{clothing_item}**. 
-
-What length do you prefer for pants?
-- **Long/Full length** (ankle length)
-- **Short** (above knee, like shorts)
-- **Capri** (mid-calf length)
-- **Mixed** (I like different lengths)"""
-        
-    elif clothing_lower in ['rok', 'skirt']:
-        question = f"""Great choice! For **{clothing_item}**, what length do you prefer?
-- **Mini** (above knee, shorter)
-- **Midi** (knee to mid-calf)
-- **Maxi** (ankle length, longer)
-- **Mixed** (I like different lengths)"""
-        
-    elif clothing_lower in ['dress', 'gaun']:
-        question = f"""Wonderful! For **{clothing_item}**, what length works best for you?
-- **Mini dress** (above knee)
-- **Midi dress** (knee to mid-calf) 
-- **Maxi dress** (ankle length)
-- **Mixed** (I like different lengths)"""
-        
-    elif clothing_lower in ['kemeja', 'shirt']:
-        question = f"""Great! For **{clothing_item}**, what sleeve length do you prefer?
-- **Long sleeves** (full arm coverage)
-- **Short sleeves** (t-shirt style)
-- **3/4 sleeves** (between elbow and wrist)
-- **Mixed** (I like different lengths)"""
-        
-    else:
-        question = f"""I see you're interested in **{clothing_item}**. What length preferences do you have for this type of clothing?
-- **Long** 
-- **Short**
-- **Medium/Midi**
-- **Mixed** (I like different lengths)"""
+    def get_clothing_category(keyword):
+        """Get clothing category for a keyword"""
+        keyword_lower = keyword.lower()
+        for category, terms in clothing_categories.items():
+            if any(term in keyword_lower for term in terms):
+                return category
+        return None
     
-    return question
-
-# ================================
-# NEW HYBRID FUNCTIONS (REPLACEMENTS)
-# ================================
-
-async def extract_ranked_keywords(ai_response=None, translated_input=None, accumulated_keywords=None):
-    """
-    UPDATED: Uses the integrated HybridKeywordExtractor
-    """
-    return await hybrid_extractor.extract_keywords_hybrid(ai_response, translated_input, accumulated_keywords)
-   
-# ================================
-# EXISTING FUNCTIONS (KEEP AS-IS)
-# ================================
-
-def update_accumulated_keywords(keywords, user_context, user_input, is_user_input=False, is_ai_response=False, is_consultation=False):
-    """
-    UPDATED: Enhanced keyword management with budget detection
-    """
-    if "accumulated_keywords" not in user_context:
-        user_context["accumulated_keywords"] = {}
+    # Extract specific clothing request if possible
+    if translated_input:
+        try:
+            wanted_items, context_items = extract_specific_clothing_request(translated_input, ai_response)
+        except:
+            # If function doesn't exist, try simple detection
+            wanted_items, context_items = [], []
+            for category, terms in clothing_categories.items():
+                for term in terms:
+                    if term in translated_input.lower():
+                        if any(indicator in translated_input.lower() for indicator in ['apa', 'what', 'carikan', 'tunjukkan', 'show']):
+                            wanted_items.append(category)
+                        else:
+                            context_items.append(category)
     
-    # STEP 1: Detect budget information from user input
-    if is_user_input:
-        detected_budget = detect_and_extract_budget(user_input, user_context)
-        if detected_budget:
-            print(f"💰 Budget information detected and stored: {detected_budget}")
+    # REVISED: Rebalanced scoring - Clothing type first, then equal features
+    scoring_categories = {
+        'clothing_items': {
+            'terms': ['kemeja', 'shirt', 'blouse', 'blus', 'dress', 'gaun', 'rok', 'skirt',
+                    'celana', 'pants', 'jeans', 'jacket', 'jaket', 'sweater', 'cardigan',
+                    'atasan', 'top', 'kaos', 't-shirt', 'hoodie', 'blazer', 'coat', 'ankle pants'],
+            'user_score': 400,      # HIGHEST PRIORITY - Clothing types
+            'ai_score': 500,        
+            'priority': 'HIGHEST'
+        },
+        'style_attributes': {
+            'terms': ['lengan panjang', 'lengan pendek', 'long sleeve', 'short sleeve',
+                    'panjang', 'long', 'pendek', 'short', 'oversized', 'slim', 'regular', 
+                    'loose', 'ketat', 'longgar', 'tight', 'fitted', 'relaxed'],
+            'user_score': 200,      # EQUAL with colors and materials
+            'ai_score': 220,        
+            'priority': 'HIGH'
+        },
+        'colors': {
+            'terms': ['white', 'putih', 'black', 'hitam', 'red', 'merah', 'blue', 'biru',
+                    'green', 'hijau', 'yellow', 'kuning', 'brown', 'coklat', 'pink',
+                    'purple', 'ungu', 'orange', 'oranye', 'grey', 'abu-abu', 'navy', 'beige'],
+            'user_score': 200,      # EQUAL with style attributes - REDUCED from 150
+            'ai_score': 220,        
+            'priority': 'HIGH'
+        },
+        'materials_fit': {
+            'terms': ['cotton', 'katun', 'silk', 'sutra', 'denim', 'wool', 'wol', 
+                    'polyester', 'linen', 'leather', 'kulit', 'casual', 'formal', 'elegant'],
+            'user_score': 200,      # EQUAL with colors and style attributes
+            'ai_score': 220,
+            'priority': 'HIGH'
+        },
+        'gender_terms': {
+            'terms': ['perempuan', 'wanita', 'female', 'woman', 'pria', 'laki-laki', 'male', 'man'],
+            'user_score': 50,       # LOW - Gender is just a filter
+            'ai_score': 30,
+            'priority': 'FILTER'
+        },
+        'occasions': {
+            'terms': ['office', 'kantor', 'party', 'pesta', 'wedding', 'pernikahan',
+                    'beach', 'pantai', 'sport', 'olahraga', 'work', 'kerja'],
+            'user_score': 150,      # LOWER than features
+            'ai_score': 170,
+            'priority': 'MEDIUM'
+        }
+    }
     
-    # STEP 2: Detect preference changes (only for user input)
-    preference_changes = []
-    if is_user_input:
-        preference_changes = detect_preference_changes_with_constants(user_input, user_context["accumulated_keywords"])
-        
-        # STEP 3: Apply preference changes with COMPLETE REMOVAL
-        if preference_changes:
-            apply_preference_changes_with_constants(preference_changes, user_context["accumulated_keywords"])
-    
-    updates_made = 0
-    new_keywords_added = 0
-    
-    for keyword, score in keywords:
-        if not keyword or len(keyword) < 2:
-            continue
-
+    def get_keyword_score(keyword, source, frequency=1):
+        """Get appropriate score with BALANCED WEIGHTING"""
         keyword_lower = keyword.lower()
         
-        # BLACKLIST CHECK using constants
-        if hasattr(FashionCategories, 'is_blacklisted') and FashionCategories.is_blacklisted(keyword):
-            print(f"   🚫 SKIPPING BLACKLISTED KEYWORD: '{keyword}'")
-            continue
+        base_score = 0
+        priority = 'DEFAULT'
         
-        # Enhanced boosting logic
-        if is_consultation:
-            frequency_boost = 50.0
-            estimated_frequency = max(1, score / 10)
-            source_label = "consultation"
-        elif is_user_input:
-            base_boost = 15.0
-            
-            # Extra boost for preference changes
-            is_preference_change = any(change['new_preference'] == keyword_lower for change in preference_changes)
-            
-            # Extra boost for important preferences using constants
-            is_color_preference = (hasattr(FashionCategories, 'is_color_preference') and 
-                                 FashionCategories.is_color_preference(keyword))
-            is_sleeve_preference = (hasattr(FashionCategories, 'is_sleeve_preference') and 
-                                  FashionCategories.is_sleeve_preference(keyword))
-            
-            if is_preference_change:
-                frequency_boost = 30.0
-                print(f"   🔄 PREFERENCE CHANGE: '{keyword}' → change boost")
-            elif is_color_preference:
-                frequency_boost = 25.0
-                print(f"   🎨 COLOR PREFERENCE: '{keyword}' → color boost")
-            elif is_sleeve_preference:
-                frequency_boost = 22.0
-                print(f"   👕 SLEEVE PREFERENCE: '{keyword}' → sleeve boost")
-            else:
-                frequency_boost = base_boost
-            
-            estimated_frequency = max(1, score / 20)
-            source_label = "user_input"
-        else:
-            frequency_boost = 1.0
-            estimated_frequency = max(1, score / 100)
-            source_label = "ai_response"
-        
-        # Keyword processing logic
-        if keyword_lower in user_context["accumulated_keywords"]:
-            # Update existing keyword
-            data = user_context["accumulated_keywords"][keyword_lower]
-            old_weight = get_weight_compatible(data)
-            old_source = data.get("source", "unknown")
-            
-            if old_source == "consultation":
-                if is_consultation:
-                    new_weight = old_weight + (score * frequency_boost)
+        for category, config in scoring_categories.items():
+            if any(term in keyword_lower for term in config['terms']):
+                if source == 'user':
+                    base_score = config['user_score'] * frequency
+                elif source == 'ai':
+                    base_score = config['ai_score'] * frequency
                 else:
-                    new_weight = old_weight + (score * 0.2)
-                new_count = data.get("count", 1) + frequency_boost
-                final_source = "consultation"
-            elif is_consultation:
-                new_weight = old_weight + (score * frequency_boost * 5)
-                new_count = data.get("count", 1) + frequency_boost
-                final_source = "consultation"
-                print(f"   ⬆️ UPGRADING TO CONSULTATION: '{keyword}'")
-            else:
-                boost_multiplier = 3.0 if any(change['new_preference'] == keyword_lower for change in preference_changes) else 1.0
-                new_weight = old_weight + (score * frequency_boost * boost_multiplier)
-                new_count = data.get("count", 1) + frequency_boost
-                final_source = source_label
-                
-                if boost_multiplier > 1.0:
-                    print(f"   🚀 PREFERENCE UPDATE: '{keyword}' → {boost_multiplier}x boost")
-            
-            # Get category using FashionCategories if available
-            if hasattr(FashionCategories, 'get_category'):
-                category = FashionCategories.get_category(keyword_lower)
-            else:
-                category = get_keyword_category(keyword_lower)  # Fallback
-            
-            user_context["accumulated_keywords"][keyword_lower] = {
-                "weight": new_weight,
-                "total_frequency": new_count,
-                "mention_count": new_count,
-                "count": new_count,
-                "first_seen": data.get("first_seen", datetime.now().isoformat()),
-                "last_seen": datetime.now().isoformat(),
-                "source": final_source,
-                "category": category,
-                "consultation_priority": old_source == "consultation" or is_consultation
-            }
-            
-            updates_made += 1
-            
-        else:
-            # Add new keyword
-            initial_frequency = estimated_frequency * frequency_boost
-            base_weight = initial_frequency * 100
-            
-            weight_multiplier = 1.0
-            
-            if is_consultation:
-                weight_multiplier = 10.0
-                print(f"   🆕 NEW CONSULTATION: '{keyword}'")
-            elif any(change['new_preference'] == keyword_lower for change in preference_changes):
-                weight_multiplier = 8.0
-                print(f"   🆕 NEW PREFERENCE: '{keyword}'")
-            elif is_user_input and (is_color_preference or is_sleeve_preference):
-                weight_multiplier = 5.0
-                print(f"   🆕 NEW IMPORTANT: '{keyword}'")
-            
-            final_weight = base_weight * weight_multiplier
-            
-            # Get category using FashionCategories if available
-            if hasattr(FashionCategories, 'get_category'):
-                category = FashionCategories.get_category(keyword_lower)
-            else:
-                category = get_keyword_category(keyword_lower)  # Fallback
-            
-            user_context["accumulated_keywords"][keyword_lower] = {
-                "weight": final_weight,
-                "total_frequency": initial_frequency,
-                "mention_count": 1,
-                "count": 1,
-                "first_seen": datetime.now().isoformat(),
-                "last_seen": datetime.now().isoformat(),
-                "source": source_label,
-                "category": category,
-                "consultation_priority": is_consultation
-            }
-            new_keywords_added += 1
-
-def detect_preference_changes_with_constants(user_input, accumulated_keywords):
-    """UPDATED: Using FashionCategories conflict groups for consistent preference change detection"""
-    if not user_input or not accumulated_keywords:
-        return []
-    
-    user_input_lower = user_input.lower()
-    preference_changes = []
-    
-    # Change patterns
-    change_patterns = [
-        r'change.*(sleeve|color|fit|style|length).*to\s+([^.!?]+)',
-        r'actually.*prefer\s+([^.!?]+)',
-        r'instead.*want\s+([^.!?]+)',
-        r'switch.*to\s+([^.!?]+)',
-        r'now.*want\s+([^.!?]+)',
-        r'ganti.*(lengan|warna|model).*jadi\s+([^.!?]+)',
-        r'sebenarnya.*prefer\s+([^.!?]+)',
-        r'lebih suka\s+([^.!?]+)',
-    ]
-    
-    # NEW: Use FashionCategories conflict groups
-    conflict_groups = FashionCategories.get_conflict_groups()
-    
-    # Check for explicit change patterns
-    for pattern in change_patterns:
-        matches = re.finditer(pattern, user_input_lower)
-        for match in matches:
-            if len(match.groups()) >= 1:
-                new_preference = match.group(-1).strip()
-                
-                for group_name, group_data in conflict_groups.items():
-                    conflict_mapping = group_data.get('conflicts', {})
-                    
-                    for pref_type, terms in conflict_mapping.items():
-                        if any(term in new_preference for term in terms):
-                            # Get all conflicting keywords from this group
-                            conflicting_keywords = []
-                            for other_type, other_terms in conflict_mapping.items():
-                                if other_type != pref_type:
-                                    conflicting_keywords.extend(other_terms)
-                            
-                            preference_changes.append({
-                                'type': 'explicit_change',
-                                'group': group_name,
-                                'new_preference': new_preference,
-                                'conflicting_keywords': conflicting_keywords
-                            })
-                            print(f"🔄 DETECTED EXPLICIT CHANGE: {group_name} → '{new_preference}'")
-                            break
-    
-    # Check for implicit conflicts using FashionCategories
-    current_preferences = {}
-    for group_name, group_data in conflict_groups.items():
-        patterns = group_data.get('patterns', [])
-        for pattern in patterns:
-            if re.search(pattern, user_input_lower):
-                matched_preference = re.search(pattern, user_input_lower).group()
-                current_preferences[group_name] = matched_preference
-                break
-    
-    for group_name, current_pref in current_preferences.items():
-        conflict_mapping = FashionCategories.get_conflict_mapping(group_name)
-        conflicting_accumulated = []
-        
-        for keyword, data in accumulated_keywords.items():
-            if isinstance(data, dict) and data.get('weight', 0) > 1000:
-                # Check if this keyword conflicts with current preference
-                for pref_type, terms in conflict_mapping.items():
-                    if any(term in keyword.lower() for term in terms):
-                        if current_pref.lower() not in keyword.lower():
-                            conflicting_accumulated.append(keyword)
-                            break
-        
-        if conflicting_accumulated:
-            preference_changes.append({
-                'type': 'implicit_conflict',
-                'group': group_name,
-                'new_preference': current_pref,
-                'conflicting_keywords': conflicting_accumulated
-            })
-            print(f"🔄 DETECTED IMPLICIT CONFLICT: {group_name} → '{current_pref}' conflicts with {conflicting_accumulated}")
-    
-    return preference_changes
-
-def apply_preference_changes_with_constants(preference_changes, accumulated_keywords):
-    """Using constants for consistent preference change application"""
-    for change in preference_changes:
-        print(f"\n🔄 APPLYING PREFERENCE CHANGE:")
-        print(f"   Type: {change['type']}")
-        print(f"   Group: {change['group']}")
-        print(f"   New preference: '{change['new_preference']}'")
-        
-        # Complete removal of conflicting keywords
-        conflicting_keywords = change['conflicting_keywords']
-        removed_count = 0
-        
-        for keyword in list(accumulated_keywords.keys()):
-            keyword_lower = str(keyword).lower()
-            
-            # Check if this keyword conflicts with the new preference
-            for conflict in conflicting_keywords:
-                if (conflict in keyword_lower and 
-                    change['new_preference'].lower() not in keyword_lower):
-                    print(f"   ❌ COMPLETELY REMOVING: '{keyword}' (conflicts with '{change['new_preference']}')")
-                    del accumulated_keywords[keyword]
-                    removed_count += 1
-                    break
-        
-        print(f"   🗑️ Completely removed {removed_count} conflicting keywords")
-
-def detect_clothing_change_in_input(user_input, user_context):
-    """
-    ENHANCED: Detect clothing changes including "only" requests and multiple items
-    """
-    user_input_lower = user_input.lower().strip()
-    
-    print(f"\n🔍 ENHANCED CLOTHING CHANGE DETECTION:")
-    print(f"   Input: '{user_input}'")
-    
-    # Get current primary clothing from accumulated keywords
-    current_clothing = []
-    accumulated_keywords = user_context.get("accumulated_keywords", {})
-    
-    # Find ALL current clothing items
-    for keyword, data in accumulated_keywords.items():
-        if keyword and FashionCategories.get_category(keyword) == 'clothing_terms':
-            weight = data.get("weight", 0) if isinstance(data, dict) else data
-            if weight > 1000:
-                current_clothing.append(keyword)
-                print(f"   Current clothing: '{keyword}' (weight: {weight})")
-    
-    if not current_clothing:
-        print(f"   No current clothing found")
-    
-    # ENHANCED: Check for "only" patterns that indicate exclusivity
-    only_patterns = [
-        r'\b(only|just|hanya|cuma|aja)\s+([^.!?]+)',
-        r'\b([^.!?]+)\s+(only|aja|saja|doang|hanya)',
-        r'\b(i want only|saya mau)\s+([^.!?]+)',
-        r'\b(just|cuma)\s+(show me|carikan)\s+([^.!?]+)'
-    ]
-    
-    is_only_request = False
-    only_clothing_items = []
-    
-    # Check for "only" patterns first
-    for pattern in only_patterns:
-        matches = re.finditer(pattern, user_input_lower)
-        for match in matches:
-            groups = match.groups()
-            # Extract the clothing part from the match
-            for group in groups:
-                if group and group not in ['only', 'just', 'hanya', 'cuma', 'aja', 'saja', 'doang', 'i want only', 'saya mau', 'show me', 'carikan']:
-                    phrase = group.strip()
-                    print(f"   Found 'only' phrase: '{phrase}'")
-                    
-                    # Check if this phrase contains clothing items
-                    for clothing_item in FashionCategories.CLOTHING_TERMS:
-                        if (clothing_item.lower() in phrase or 
-                            any(word.strip('.,!?()[]{}":;') == clothing_item.lower() for word in phrase.split())):
-                            if clothing_item not in only_clothing_items:
-                                only_clothing_items.append(clothing_item)
-                                is_only_request = True
-                                print(f"   ✅ Found ONLY clothing: '{clothing_item}'")
-    
-    # Enhanced patterns for multiple clothing detection
-    clothing_change_patterns = [
-        r'\b(?:bagaimana|gimana|how about|what about)\s+(?:dengan\s+)?([^.!?]+)',
-        r'\b(?:ada|do you have|punya)\s+([^.!?]+)',
-        r'\b(?:carikan|cari|find|show)\s+(?:me\s+)?([^.!?]+)',
-        r'\b(?:sekarang|now)\s+(?:saya\s+)?(?:mau|want|ingin)\s+([^.!?]+)',
-        r'\b(?:untuk|for)\s+([^.!?]+)',
-        r'\b([^.!?]+)\s+(?:dong|aja|saja)',
-        r'\b(?:ganti|change|switch)\s+(?:ke|to)\s+([^.!?]+)',
-        # NEW: Handle "dan/and" combinations
-        r'\b([a-zA-Z]+)\s+(?:dan|and)\s+([a-zA-Z]+)',
-        r'\b([a-zA-Z]+)\s*,\s*([a-zA-Z]+)'
-    ]
-    
-    # Collect ALL new clothing mentions (if not an "only" request)
-    new_clothing_items = only_clothing_items.copy() if is_only_request else []
-    detected_phrases = set()
-    
-    if not is_only_request:
-        # First try pattern matching for context-aware detection
-        for pattern in clothing_change_patterns:
-            matches = re.finditer(pattern, user_input_lower)
-            for match in matches:
-                groups = match.groups()
-                
-                # Handle "dan/and" patterns specially
-                if len(groups) == 2 and 'dan|and' in pattern:
-                    for word in groups:
-                        word = word.strip('.,!?()[]{}":;')
-                        for clothing_item in FashionCategories.CLOTHING_TERMS:
-                            if (clothing_item.lower() == word or 
-                                word in clothing_item.lower() or 
-                                clothing_item.lower() in word):
-                                if clothing_item not in new_clothing_items:
-                                    new_clothing_items.append(clothing_item)
-                                    print(f"   ✅ Found clothing via dan/and: '{clothing_item}' from word '{word}'")
-                else:
-                    # Handle other patterns
-                    for group in groups:
-                        phrase = group.strip()
-                        if phrase in detected_phrases:
-                            continue
-                        detected_phrases.add(phrase)
-                        
-                        print(f"   Analyzing phrase: '{phrase}'")
-                        
-                        # Check each word in the phrase for clothing items
-                        words = phrase.split()
-                        for word in words:
-                            word = word.strip('.,!?()[]{}":;')
-                            
-                            # Check if it's a valid clothing item
-                            for clothing_item in FashionCategories.CLOTHING_TERMS:
-                                if (clothing_item.lower() == word or 
-                                    word in clothing_item.lower() or 
-                                    clothing_item.lower() in word):
-                                    if clothing_item not in new_clothing_items:
-                                        new_clothing_items.append(clothing_item)
-                                        print(f"   ✅ Found clothing via pattern: '{clothing_item}' from word '{word}'")
-        
-        # Also try direct matching for any missed items
-        for clothing_item in FashionCategories.CLOTHING_TERMS:
-            if clothing_item.lower() in user_input_lower and clothing_item not in new_clothing_items:
-                new_clothing_items.append(clothing_item)
-                print(f"   ✅ Found clothing via direct match: '{clothing_item}'")
-    
-    if not new_clothing_items:
-        print(f"   ❌ No clothing items detected")
-        return False, []
-    
-    # ENHANCED: Handle "only" requests - this means REPLACE all current clothing
-    if is_only_request:
-        print(f"   🎯 ONLY REQUEST: User wants ONLY {only_clothing_items}")
-        print(f"   🔄 Will replace ALL current clothing with: {only_clothing_items}")
-        return True, only_clothing_items
-    
-    # Check if any new clothing is different from current clothing
-    truly_new_items = []
-    
-    for new_item in new_clothing_items:
-        is_new = True
-        for current_item in current_clothing:
-            if new_item.lower() == current_item.lower():
-                is_new = False
-                print(f"   ⚪ Already have: '{new_item}'")
+                    base_score = config['user_score'] * frequency * 0.5
+                priority = config['priority']
                 break
         
-        if is_new:
-            truly_new_items.append(new_item)
+        if base_score == 0:
+            if source == 'user':
+                base_score = 100 * frequency
+            elif source == 'ai':
+                base_score = 120 * frequency
+            else:
+                base_score = 50 * frequency
+            priority = 'DEFAULT'
+        
+        # Moderate specific request boost
+        clothing_category = get_clothing_category(keyword)
+        if clothing_category and clothing_category in wanted_items:
+            if source == 'ai':
+                boost = base_score * 2
+                print(f"      🤖🚀 AI WANTED BOOST: '{keyword}' ({clothing_category}) {base_score} → {base_score + boost}")
+            else:
+                boost = base_score * 1.5
+                print(f"      👤🚀 USER WANTED BOOST: '{keyword}' ({clothing_category}) {base_score} → {base_score + boost}")
+            base_score += boost
+            priority = 'SPECIFIC_REQUEST'
+        
+        return base_score, priority
     
-    if truly_new_items:
-        print(f"   ✅ NEW CLOTHING DETECTED: {truly_new_items}")
-        print(f"   📝 Will ADD to existing: {current_clothing}")
-        return True, new_clothing_items  # Return ALL clothing items (existing + new)
-    elif not current_clothing and new_clothing_items:
-        print(f"   🆕 FIRST CLOTHING DETECTED: {new_clothing_items}")
-        return True, new_clothing_items
-    else:
-        print(f"   ⚪ No new clothing items")
-        return False, []
-    
-def get_weight_compatible(data):
-    """Extract weight from data in a compatible way"""
-    if isinstance(data, dict):
-        return data.get("weight", 0)
-    else:
-        return float(data) if data else 0
-
-def get_keyword_category(keyword_lower):
-    """Get the category of a keyword for smart boosting"""
-    categories = {
-        'clothing_items': ['kemeja', 'shirt', 'blouse', 'celana', 'pants', 'rok', 'skirt', 'dress', 'gaun'],
-        'style_attributes': ['casual', 'formal', 'elegant', 'vintage', 'modern'],
-        'colors': ['black', 'white', 'red', 'blue', 'hitam', 'putih'],
-        'user_identity': ['female', 'male', 'woman', 'man', 'perempuan'],
-        'occasions': ['office', 'party', 'wedding', 'kantor', 'pesta']
-    }
-    
-    for category, terms in categories.items():
-        if any(term in keyword_lower for term in terms):
-            return category
-    
-    return 'other'
-
-def detect_and_update_gender(user_input, user_context, force_update=False):
-    """
-    ENHANCED: More responsive gender detection that handles changes during conversation
-    """
-    print(f"\n👤 ENHANCED GENDER DETECTION")
-    print("="*50)
-    print(f"📝 Input: '{user_input}'")
-    
-    current_gender = user_context.get("user_gender", {})
-    has_existing_gender = current_gender.get("category") is not None
-    
-    # Enhanced gender detection patterns with change detection
-    gender_patterns = {
-        'male': [
-            # Direct statements
-            r'\b(i am|i\'m|saya|aku)\s+(a\s+)?(male|man|pria|laki-laki|cowok|cowo|laki)\b',
-            r'\b(male|man|pria|laki-laki|cowok|cowo|laki)\b',
-            r'\b(as a|sebagai)\s+(male|man|pria|laki-laki)\b',
-            r'\b(gender|jenis kelamin).*(male|man|pria|laki-laki)\b',
-            r'\b(i\'m a|saya)\s+(guy|boy|male)\b',
-            
-            # Change patterns
-            r'\b(change|ganti|ubah).*gender.*(to|jadi|menjadi)\s+(male|man|pria|laki-laki)\b',
-            r'\b(actually|sebenarnya).*i.*(am|\'m)\s+(male|man|pria|laki-laki)\b',
-            r'\b(not|bukan|tidak).*(female|woman|perempuan).*i.*(am|\'m)\s+(male|man|pria)\b',
-            r'\b(i.*(am|\'m)\s+a\s+)?(male|man|pria|laki-laki).*not\s+(female|woman|perempuan)\b'
-        ],
-        'female': [
-            # Direct statements
-            r'\b(i am|i\'m|saya|aku)\s+(a\s+)?(female|woman|perempuan|wanita|cewek|cewe)\b',
-            r'\b(female|woman|perempuan|wanita|cewek|cewe)\b',
-            r'\b(as a|sebagai)\s+(female|woman|perempuan|wanita)\b',
-            r'\b(gender|jenis kelamin).*(female|woman|perempuan|wanita)\b',
-            r'\b(i\'m a|saya)\s+(girl|lady|female)\b',
-            
-            # Change patterns
-            r'\b(change|ganti|ubah).*gender.*(to|jadi|menjadi)\s+(female|woman|perempuan|wanita)\b',
-            r'\b(actually|sebenarnya).*i.*(am|\'m)\s+(female|woman|perempuan|wanita)\b',
-            r'\b(not|bukan|tidak).*(male|man|pria).*i.*(am|\'m)\s+(female|woman|perempuan)\b',
-            r'\b(i.*(am|\'m)\s+a\s+)?(female|woman|perempuan|wanita).*not\s+(male|man|pria)\b'
+    def is_physical_description(text):
+        """Check if text contains physical description"""
+        text_lower = text.lower()
+        
+        physical_indicators = [
+            r'\b(?:kulit|skin)\s+\w+',
+            r'\bberkulit\s+\w+',
+            r'\bwarna\s+kulit',
+            r'\bskin\s+tone',
+            r'\b\d+\s*(?:cm|kg|tahun|years?)',
+            r'\b(?:tinggi|height|berat|weight|umur|age)',
+            r'\b(?:dari|from)\s+(?:indonesia|malaysia|singapore|thailand)',
+            r'\b(?:cowo|cowok|cewe|cewek|pria|wanita|laki-laki|perempuan)',
+            r'\b(?:suka|like)\s+(?:olahraga|sport|gym|fitness)',
         ]
-    }
+        
+        for pattern in physical_indicators:
+            if re.search(pattern, text_lower):
+                return True
+        return False
     
-    user_input_lower = user_input.lower()
-    detected_gender = None
-    detected_term = None
-    confidence = 0
-    is_correction = False
+    def filter_skin_colors(keyword):
+        """Filter out skin color mentions"""
+        keyword_lower = keyword.lower()
+        
+        # Check for skin color contexts
+        skin_color_patterns = [
+            r'\b(?:kulit|skin)\s+([a-zA-Z]+)\b',
+            r'\b([a-zA-Z]+)\s+(?:kulit|skin)\b',
+            r'\bberkulit\s+([a-zA-Z]+)\b',
+            r'\b(?:skin\s+tone|warna\s+kulit)\s+([a-zA-Z]+)\b',
+        ]
+        
+        for pattern in skin_color_patterns:
+            if re.search(pattern, keyword_lower):
+                print(f"      🚫 SKIN COLOR FILTERED: '{keyword}' - not a clothing color")
+                return True
+        
+        # Check if "tan" appears in physical context
+        if keyword_lower == 'tan' and any(phys in keyword_lower for phys in ['kulit', 'skin']):
+            print(f"      🚫 SKIN COLOR FILTERED: '{keyword}' - tan in skin context")
+            return True
+        
+        return False
     
-    # Check for gender change/correction patterns first
-    change_indicators = [
-        'change', 'ganti', 'ubah', 'actually', 'sebenarnya', 'not', 'bukan', 'tidak',
-        'correction', 'koreksi', 'salah', 'wrong', 'should be', 'seharusnya'
+    # Process user input with physical description filtering
+    if translated_input:
+        print(f"📝 USER INPUT: '{translated_input}'")
+        
+        # Check for simple response
+        input_words = translated_input.lower().split()
+        is_simple_response = (
+            len(input_words) <= 2 and 
+            all(word in simple_responses for word in input_words)
+        )
+        
+        if is_simple_response:
+            print(f"   ⚠️  SIMPLE RESPONSE DETECTED - Skipping")
+            return []
+        
+        # NEW: Check if input is primarily physical description
+        if is_physical_description(translated_input):
+            print(f"   🚫 PHYSICAL DESCRIPTION DETECTED - Filtering out non-clothing terms")
+            
+            # Split input into clothing vs physical parts
+            clothing_terms = []
+            physical_terms = []
+            
+            for word in translated_input.split():
+                if any(clothing in word.lower() for clothing in ['kemeja', 'shirt', 'celana', 'pants', 'lengan', 'sleeve', 'oversized', 'loose', 'tight', 'kaos', 'dress', 'gaun', 'rok', 'jaket', 'pendek', 'panjang']):
+                    clothing_terms.append(word)
+                elif any(physical in word.lower() for physical in ['kulit', 'skin', 'cm', 'kg', 'tinggi', 'berat', 'dari', 'indonesia', 'cowo', 'cewe', 'cowok', 'cewek', 'pria', 'wanita', 'tahun', 'umur']):
+                    physical_terms.append(word)
+                else:
+                    clothing_terms.append(word)  # Default to clothing context
+            
+            print(f"   👕 CLOTHING TERMS: {clothing_terms}")
+            print(f"   🚫 PHYSICAL TERMS: {physical_terms}")
+            
+            # Only process clothing terms
+            filtered_input = ' '.join(clothing_terms)
+            doc = nlp(filtered_input) if filtered_input.strip() else nlp("")
+        else:
+            doc = nlp(translated_input)
+        
+        # Extract keywords using spaCy
+        user_keywords = {}
+        
+        for token in doc:
+            if (token.pos_ in ['NOUN', 'ADJ', 'PROPN'] and 
+                len(token.text) > 2 and 
+                not token.text.isdigit() and
+                token.is_alpha and
+                token.text.lower() not in simple_responses):
+                
+                keyword = token.text.lower()
+                
+                # Filter out skin colors
+                if filter_skin_colors(keyword):
+                    continue
+                
+                user_keywords[keyword] = user_keywords.get(keyword, 0) + 1
+                
+                # Track clothing categories
+                clothing_cat = get_clothing_category(keyword)
+                if clothing_cat:
+                    current_input_categories.add(clothing_cat)
+        
+        # Score user keywords
+        for keyword, frequency in user_keywords.items():
+            score, priority = get_keyword_score(keyword, 'user', frequency)
+            keyword_scores[keyword] = score
+            
+            print(f"   📌 '{keyword}' (freq: {frequency}) → {score} ({priority})")
+            
+            # Get translation expansion and exclusions
+            try:
+                search_terms = get_search_terms_for_keyword(keyword)
+                if isinstance(search_terms, dict):
+                    include_terms = search_terms.get('include', [])
+                    exclude_terms = search_terms.get('exclude', [])
+                    
+                    for include_term in include_terms:
+                        if include_term != keyword and include_term not in keyword_scores:
+                            expansion_score = score * 0.7
+                            
+                            # Apply wanted item boost to expansions
+                            expansion_clothing_cat = get_clothing_category(include_term)
+                            if expansion_clothing_cat and expansion_clothing_cat in wanted_items:
+                                expansion_score *= 1.5
+                                print(f"      ➕ BOOSTED expansion '{keyword}' → '{include_term}' ({expansion_score:.1f})")
+                            else:
+                                print(f"      ➕ Expanded '{keyword}' → '{include_term}' ({expansion_score:.1f})")
+                            
+                            keyword_scores[include_term] = expansion_score
+                    
+                    if exclude_terms:
+                        global_exclusions.update(exclude_terms)
+                        print(f"      🚫 Will exclude: {exclude_terms}")
+            except Exception as e:
+                print(f"      ⚠️ Translation mapping error: {e}")
+                pass
+    
+    # Process AI response (HIGH PRIORITY)
+    if ai_response:
+        print(f"\n🤖 AI RESPONSE processing (HIGH PRIORITY)...")
+        
+        bold_headings = extract_bold_headings_from_ai_response(ai_response)
+        print(f"   📋 Found {len(bold_headings)} bold headings: {bold_headings}")
+        
+        for heading in bold_headings:
+            heading_lower = heading.lower()
+            cleaned_heading = re.sub(r'[^\w\s-]', '', heading_lower).strip()
+            
+            if cleaned_heading and len(cleaned_heading) > 2:
+                score, priority = get_keyword_score(cleaned_heading, 'ai', 3)
+                
+                # Always add AI headings
+                if cleaned_heading not in keyword_scores:
+                    keyword_scores[cleaned_heading] = score
+                else:
+                    keyword_scores[cleaned_heading] = max(keyword_scores[cleaned_heading], score)
+                
+                print(f"   🔥 BOLD HEADING: '{cleaned_heading}' → {score} ({priority})")
+                
+                # Track clothing categories
+                clothing_cat = get_clothing_category(cleaned_heading)
+                if clothing_cat:
+                    current_input_categories.add(clothing_cat)
+                
+                # Expand bold headings
+                try:
+                    search_terms = get_search_terms_for_keyword(cleaned_heading)
+                    if isinstance(search_terms, dict):
+                        include_terms = search_terms.get('include', [])
+                        exclude_terms = search_terms.get('exclude', [])
+                        
+                        for include_term in include_terms:
+                            if include_term not in keyword_scores:
+                                expansion_score = score * 0.8
+                                
+                                expansion_clothing_cat = get_clothing_category(include_term)
+                                if expansion_clothing_cat and expansion_clothing_cat in wanted_items:
+                                    expansion_score *= 1.5
+                                    print(f"      ➕ BOOSTED AI expansion: '{cleaned_heading}' → '{include_term}' ({expansion_score:.1f})")
+                                else:
+                                    print(f"      ➕ AI expansion: '{cleaned_heading}' → '{include_term}' ({expansion_score:.1f})")
+                                
+                                keyword_scores[include_term] = expansion_score
+                        
+                        if exclude_terms:
+                            global_exclusions.update(exclude_terms)
+                except:
+                    pass
+    
+    # Process accumulated keywords
+    if accumulated_keywords:
+        print(f"\n📚 ACCUMULATED keywords...")
+        
+        for keyword, old_weight in accumulated_keywords[:10]:
+            if (keyword and len(keyword) > 2 and 
+                keyword.lower() not in simple_responses and
+                not any(char.isdigit() for char in keyword)):
+                
+                # Filter out skin colors from accumulated keywords too
+                if filter_skin_colors(keyword):
+                    continue
+                
+                accumulated_score = old_weight * 0.4
+                
+                if keyword not in keyword_scores and accumulated_score > 15:
+                    keyword_scores[keyword] = accumulated_score
+                    print(f"   📜 '{keyword}' → {accumulated_score:.1f}")
+    
+    # Clean up unwanted terms
+    excluded_terms = [
+        # Budget and numbers
+        "rb", "ribu", "rupiah", "budget", "anggaran", "harga", "price",
+        
+        # Generic conversation words
+        "yang", "dan", "atau", "dengan", "untuk", "dari", "pada", "akan",
+        "dapat", "ada", "adalah", "ini", "itu", "saya", "anda", "kamu",
+        "mereka", "dia", "sangat", "lebih", "kurang", "bagus", "baik",
+        "cocok", "sesuai", "tepat", "bisa", "juga", "hanya", "sudah",
+        
+        # AI response fillers
+        "recommendation", "rekomendasi", "suggestion", "saran", "option",
+        "pilihan", "choice", "style", "gaya", "tampilan", "fit",
+        
+        # Physical descriptors
+        "kulit", "skin", "tubuh", "body", "tinggi", "height", "berat", "weight",
+        "cowo", "cewe", "pria", "wanita", "indonesia", "dari", "cm", "kg"
     ]
     
-    if any(indicator in user_input_lower for indicator in change_indicators):
-        is_correction = True
-        print(f"   🔄 CORRECTION/CHANGE DETECTED in input")
+    cleanup_keywords = []
+    for keyword in list(keyword_scores.keys()):
+        if (keyword in excluded_terms or 
+            len(keyword.split()) > 3 or
+            len(keyword) <= 2):
+            cleanup_keywords.append(keyword)
     
-    # Check for gender patterns
-    for gender, patterns in gender_patterns.items():
-        for pattern in patterns:
-            match = re.search(pattern, user_input_lower)
-            if match:
-                detected_gender = gender
-                detected_term = match.group()
-                
-                # Higher confidence for corrections or when existing gender is different
-                if is_correction or (has_existing_gender and current_gender.get("category") != gender):
-                    confidence = 20.0  # Higher confidence for corrections
-                    print(f"   🔄 GENDER CHANGE/CORRECTION: '{pattern}' → '{detected_term}'")
-                else:
-                    confidence = 15.0
-                    print(f"   🎯 GENDER DETECTION: '{pattern}' → '{detected_term}'")
-                break
-        if detected_gender:
+    for keyword in cleanup_keywords:
+        del keyword_scores[keyword]
+        print(f"   🗑️ Cleaned: '{keyword}'")
+    
+    # Sort and return
+    ranked_keywords = sorted(keyword_scores.items(), key=lambda x: x[1], reverse=True)
+    
+    print(f"\n🏆 FINAL CONTEXT-AWARE KEYWORDS:")
+    for i, (keyword, score) in enumerate(ranked_keywords[:15]):
+        clothing_cat = get_clothing_category(keyword)
+        
+        if clothing_cat in wanted_items:
+            category_icon = "🎯"
+            priority = "🚀 WANTED"
+        elif clothing_cat in context_items:
+            category_icon = "📝"
+            priority = "📋 CONTEXT"
+        elif score >= 500:
+            category_icon = "⭐"
+            priority = "🔥 AI-HIGH"
+        elif score >= 300:
+            category_icon = "👕"
+            priority = "🎯 HIGH"
+        elif score >= 150:
+            category_icon = "📋"
+            priority = "📋 MED"
+        else:
+            category_icon = "📝"
+            priority = "📝 LOW"
+        
+        clothing_display = f" [{clothing_cat}]" if clothing_cat else ""
+        print(f"   {i+1:2d}. {category_icon} {priority} '{keyword}'{clothing_display} → {score:.1f}")
+    
+    if global_exclusions:
+        print(f"\n🚫 PRODUCT EXCLUSIONS:")
+        for term in sorted(global_exclusions):
+            print(f"   ❌ '{term}'")
+    
+    print(f"\n📊 CONTEXT-AWARE SUMMARY:")
+    print(f"   🎯 Wanted items: {wanted_items}")
+    print(f"   📝 Context items: {context_items}")
+    ai_high = len([k for k, s in ranked_keywords if s >= 500])
+    user_high = len([k for k, s in ranked_keywords if 300 <= s < 500])
+    medium = len([k for k, s in ranked_keywords if 150 <= s < 300])
+    
+    print(f"   🤖 AI high priority (500+): {ai_high}")
+    print(f"   👤 User high priority (300-499): {user_high}")
+    print(f"   📋 Medium priority (150-299): {medium}")
+    print(f"   📝 Total keywords: {len(ranked_keywords)}")
+    print("="*60)
+    
+    # Store results
+    extract_ranked_keywords.last_exclusions = list(global_exclusions)
+    extract_ranked_keywords.wanted_items = wanted_items
+    extract_ranked_keywords.context_items = context_items
+    
+    return ranked_keywords[:15]
+
+def get_search_terms_for_keyword(keyword):
+    """
+    Complete version with ALL keywords from the original function, enhanced with exclusions.
+    Get both English and Indonesian search terms for a keyword to improve product matching.
+    Returns a dictionary with 'include' and 'exclude' terms.
+    """
+    keyword_lower = keyword.lower().strip()
+    
+    # Complete translation mapping with ALL original keywords plus exclusions
+    translation_map = {
+        # Clothing types - WITH PROPER EXCLUSIONS
+        'shirt': {
+            'include': ['shirt', 'kemeja', 'baju', 'atasan'],
+            'exclude': ['t-shirt', 'tshirt', 'kaos', 'baju kaos', 'tank top', 'polo']
+        },
+        'kemeja': {
+            'include': ['kemeja', 'shirt', 'baju', 'atasan'],
+            'exclude': ['t-shirt', 'tshirt', 'kaos', 'baju kaos', 'tank top', 'polo']
+        },
+        'blouse': {
+            'include': ['blouse', 'blus', 'kemeja wanita', 'atasan wanita'],
+            'exclude': ['t-shirt', 'kaos', 'tank top']
+        },
+        'blus': {
+            'include': ['blus', 'blouse', 'kemeja wanita'],
+            'exclude': ['t-shirt', 'kaos', 'tank top']
+        },
+        'dress': {
+            'include': ['dress', 'gaun', 'terusan'],
+            'exclude': ['shirt', 'kemeja', 'top', 'atasan']
+        },
+        'gaun': {
+            'include': ['gaun', 'dress', 'terusan'],
+            'exclude': ['shirt', 'kemeja', 'top', 'atasan']
+        },
+        'pants': {
+            'include': ['pants', 'celana', 'bawahan'],
+            'exclude': []
+        },
+        'celana': {
+            'include': ['celana', 'pants', 'bawahan'],
+            'exclude': []
+        },
+        'skirt': {
+            'include': ['skirt', 'rok'],
+            'exclude': []
+        },
+        'rok': {
+            'include': ['rok', 'skirt'],
+            'exclude': []
+        },
+        'jacket': {
+            'include': ['jacket', 'jaket', 'jas'],
+            'exclude': []
+        },
+        'jaket': {
+            'include': ['jaket', 'jacket', 'jas'],
+            'exclude': []
+        },
+        'sweater': {
+            'include': ['sweater', 'baju hangat', 'jumper'],
+            'exclude': []
+        },
+        'cardigan': {
+            'include': ['cardigan', 'kardigan'],
+            'exclude': []
+        },
+        'kardigan': {
+            'include': ['kardigan', 'cardigan'],
+            'exclude': []
+        },
+        'jeans': {
+            'include': ['jeans', 'jins', 'celana jeans', 'denim'],
+            'exclude': []
+        },
+        'hoodie': {
+            'include': ['hoodie', 'jaket hoodie', 'sweater hoodie'],
+            'exclude': []
+        },
+        'coat': {
+            'include': ['coat', 'mantel', 'jaket panjang'],
+            'exclude': []
+        },
+        'mantel': {
+            'include': ['mantel', 'coat', 'jaket panjang'],
+            'exclude': []
+        },
+        'blazer': {
+            'include': ['blazer', 'jas blazer'],
+            'exclude': []
+        },
+        'top': {
+            'include': ['top', 'atasan', 'baju atas'],
+            'exclude': []
+        },
+        'atasan': {
+            'include': ['atasan', 'top', 'baju atas'],
+            'exclude': []
+        },
+        # T-SHIRTS - SEPARATE CATEGORY (this was missing proper exclusions)
+        't-shirt': {
+            'include': ['t-shirt', 'tshirt', 'kaos', 'baju kaos'],
+            'exclude': ['kemeja', 'shirt', 'dress shirt', 'button shirt', 'formal shirt']
+        },
+        'kaos': {
+            'include': ['kaos', 't-shirt', 'tshirt', 'baju kaos'],
+            'exclude': ['kemeja', 'shirt', 'dress shirt', 'button shirt', 'formal shirt']
+        },
+        
+        # Colors - ALL ORIGINAL COLORS
+        'white': {
+            'include': ['white', 'putih'],
+            'exclude': ['black', 'hitam']
+        },
+        'putih': {
+            'include': ['putih', 'white'],
+            'exclude': ['hitam', 'black']
+        },
+        'black': {
+            'include': ['black', 'hitam'],
+            'exclude': ['white', 'putih']
+        },
+        'hitam': {
+            'include': ['hitam', 'black'],
+            'exclude': ['putih', 'white']
+        },
+        'red': {
+            'include': ['red', 'merah'],
+            'exclude': []
+        },
+        'merah': {
+            'include': ['merah', 'red'],
+            'exclude': []
+        },
+        'blue': {
+            'include': ['blue', 'biru'],
+            'exclude': []
+        },
+        'biru': {
+            'include': ['biru', 'blue'],
+            'exclude': []
+        },
+        'green': {
+            'include': ['green', 'hijau'],
+            'exclude': []
+        },
+        'hijau': {
+            'include': ['hijau', 'green'],
+            'exclude': []
+        },
+        'yellow': {
+            'include': ['yellow', 'kuning'],
+            'exclude': []
+        },
+        'kuning': {
+            'include': ['kuning', 'yellow'],
+            'exclude': []
+        },
+        'pink': {
+            'include': ['pink', 'merah muda', 'rosa'],
+            'exclude': []
+        },
+        'purple': {
+            'include': ['purple', 'ungu', 'violet'],
+            'exclude': []
+        },
+        'ungu': {
+            'include': ['ungu', 'purple', 'violet'],
+            'exclude': []
+        },
+        'orange': {
+            'include': ['orange', 'oranye', 'jingga'],
+            'exclude': []
+        },
+        'oranye': {
+            'include': ['oranye', 'orange', 'jingga'],
+            'exclude': []
+        },
+        'brown': {
+            'include': ['brown', 'coklat', 'cokelat'],
+            'exclude': []
+        },
+        'coklat': {
+            'include': ['coklat', 'brown', 'cokelat'],
+            'exclude': []
+        },
+        'grey': {
+            'include': ['grey', 'gray', 'abu-abu'],
+            'exclude': []
+        },
+        'gray': {
+            'include': ['gray', 'grey', 'abu-abu'],
+            'exclude': []
+        },
+        'navy': {
+            'include': ['navy', 'biru tua', 'biru dongker'],
+            'exclude': []
+        },
+        'beige': {
+            'include': ['beige', 'krem', 'cream'],
+            'exclude': []
+        },
+        'krem': {
+            'include': ['krem', 'beige', 'cream'],
+            'exclude': []
+        },
+        
+        # Styles - ALL ORIGINAL STYLES
+        'casual': {
+            'include': ['casual', 'santai', 'kasual'],
+            'exclude': []
+        },
+        'santai': {
+            'include': ['santai', 'casual', 'kasual'],
+            'exclude': []
+        },
+        'kasual': {
+            'include': ['kasual', 'casual', 'santai'],
+            'exclude': []
+        },
+        'formal': {
+            'include': ['formal', 'resmi'],
+            'exclude': []
+        },
+        'resmi': {
+            'include': ['resmi', 'formal'],
+            'exclude': []
+        },
+        'elegant': {
+            'include': ['elegant', 'elegan'],
+            'exclude': []
+        },
+        'elegan': {
+            'include': ['elegan', 'elegant'],
+            'exclude': []
+        },
+        'modern': {
+            'include': ['modern', 'kontemporer'],
+            'exclude': []
+        },
+        'vintage': {
+            'include': ['vintage', 'klasik', 'retro'],
+            'exclude': []
+        },
+        'klasik': {
+            'include': ['klasik', 'vintage', 'retro'],
+            'exclude': []
+        },
+        'bohemian': {
+            'include': ['bohemian', 'boho'],
+            'exclude': []
+        },
+        'boho': {
+            'include': ['boho', 'bohemian'],
+            'exclude': []
+        },
+        'minimalist': {
+            'include': ['minimalist', 'minimalis', 'simple'],
+            'exclude': []
+        },
+        'minimalis': {
+            'include': ['minimalis', 'minimalist', 'simple'],
+            'exclude': []
+        },
+        'feminine': {
+            'include': ['feminine', 'feminin'],
+            'exclude': []
+        },
+        'feminin': {
+            'include': ['feminin', 'feminine'],
+            'exclude': []
+        },
+        'masculine': {
+            'include': ['masculine', 'maskulin'],
+            'exclude': []
+        },
+        'maskulin': {
+            'include': ['maskulin', 'masculine'],
+            'exclude': []
+        },
+        'ethnic': {
+            'include': ['ethnic', 'etnik', 'tradisional'],
+            'exclude': []
+        },
+        'etnik': {
+            'include': ['etnik', 'ethnic', 'tradisional'],
+            'exclude': []
+        },
+        'streetwear': {
+            'include': ['streetwear', 'jalanan'],
+            'exclude': []
+        },
+        'oversized': {
+            'include': ['oversized', 'longgar', 'besar'],
+            'exclude': []
+        },
+        'longgar': {
+            'include': ['longgar', 'oversized', 'loose'],
+            'exclude': []
+        },
+        'slim': {
+            'include': ['slim', 'ketat', 'fit'],
+            'exclude': []
+        },
+        'ketat': {
+            'include': ['ketat', 'slim', 'tight'],
+            'exclude': []
+        },
+        
+        # Materials - ALL ORIGINAL MATERIALS
+        'cotton': {
+            'include': ['cotton', 'katun'],
+            'exclude': []
+        },
+        'katun': {
+            'include': ['katun', 'cotton'],
+            'exclude': []
+        },
+        'silk': {
+            'include': ['silk', 'sutra'],
+            'exclude': []
+        },
+        'sutra': {
+            'include': ['sutra', 'silk'],
+            'exclude': []
+        },
+        'wool': {
+            'include': ['wool', 'wol'],
+            'exclude': []
+        },
+        'wol': {
+            'include': ['wol', 'wool'],
+            'exclude': []
+        },
+        'linen': {
+            'include': ['linen', 'linen'],
+            'exclude': []
+        },
+        'polyester': {
+            'include': ['polyester', 'poliester'],
+            'exclude': []
+        },
+        'leather': {
+            'include': ['leather', 'kulit'],
+            'exclude': []
+        },
+        'kulit': {
+            'include': ['kulit', 'leather'],
+            'exclude': []
+        },
+        'denim': {
+            'include': ['denim', 'jeans'],
+            'exclude': []
+        },
+        'knit': {
+            'include': ['knit', 'rajut'],
+            'exclude': []
+        },
+        'rajut': {
+            'include': ['rajut', 'knit'],
+            'exclude': []
+        },
+        'satin': {
+            'include': ['satin'],
+            'exclude': []
+        },
+        'velvet': {
+            'include': ['velvet', 'beludru'],
+            'exclude': []
+        },
+        'beludru': {
+            'include': ['beludru', 'velvet'],
+            'exclude': []
+        },
+        
+        # Features - ALL ORIGINAL FEATURES
+        'sleeve': {
+            'include': ['sleeve', 'lengan'],
+            'exclude': []
+        },
+        'lengan': {
+            'include': ['lengan', 'sleeve'],
+            'exclude': []
+        },
+        'collar': {
+            'include': ['collar', 'kerah'],
+            'exclude': []
+        },
+        'kerah': {
+            'include': ['kerah', 'collar'],
+            'exclude': []
+        },
+        'pocket': {
+            'include': ['pocket', 'kantong', 'saku'],
+            'exclude': []
+        },
+        'kantong': {
+            'include': ['kantong', 'pocket', 'saku'],
+            'exclude': []
+        },
+        'button': {
+            'include': ['button', 'kancing'],
+            'exclude': []
+        },
+        'kancing': {
+            'include': ['kancing', 'button'],
+            'exclude': []
+        },
+        'zipper': {
+            'include': ['zipper', 'resleting'],
+            'exclude': []
+        },
+        'resleting': {
+            'include': ['resleting', 'zipper'],
+            'exclude': []
+        },
+        'embroidery': {
+            'include': ['embroidery', 'bordir'],
+            'exclude': []
+        },
+        'bordir': {
+            'include': ['bordir', 'embroidery'],
+            'exclude': []
+        },
+        'pattern': {
+            'include': ['pattern', 'motif', 'pola'],
+            'exclude': []
+        },
+        'motif': {
+            'include': ['motif', 'pattern', 'pola'],
+            'exclude': []
+        },
+        'print': {
+            'include': ['print', 'cetak'],
+            'exclude': []
+        },
+        'colorful': {
+            'include': ['colorful', 'berwarna', 'warni'],
+            'exclude': []
+        },
+        'berwarna': {
+            'include': ['berwarna', 'colorful', 'warni'],
+            'exclude': []
+        },
+        'plain': {
+            'include': ['plain', 'polos'],
+            'exclude': []
+        },
+        'polos': {
+            'include': ['polos', 'plain'],
+            'exclude': []
+        },
+        'lace': {
+            'include': ['lace', 'renda'],
+            'exclude': []
+        },
+        'renda': {
+            'include': ['renda', 'lace'],
+            'exclude': []
+        },
+        'panjang': {
+            'include': ['panjang', 'long', 'maxi'],
+            'exclude': ['pendek', 'short', 'mini']
+        },
+        'long': {
+            'include': ['long', 'panjang', 'maxi'],
+            'exclude': ['pendek', 'short', 'mini']
+        },
+        'maxi': {
+            'include': ['maxi', 'panjang', 'long'],
+            'exclude': ['mini', 'pendek', 'short']
+        },
+        'short': {
+            'include': ['short', 'pendek', 'mini'],
+            'exclude': ['panjang', 'long', 'maxi']
+        },
+        'pendek': {
+            'include': ['pendek', 'short', 'mini'],
+            'exclude': ['panjang', 'long', 'maxi']
+        },
+        'mini': {
+            'include': ['mini', 'pendek', 'short'],
+            'exclude': ['maxi', 'panjang', 'long']
+        },
+        'midi': {
+            'include': ['midi', 'medium', 'sedang'],
+            'exclude': ['mini', 'maxi', 'pendek', 'panjang', 'short', 'long']
+        },
+        'medium': {
+            'include': ['medium', 'midi', 'sedang'],
+            'exclude': ['mini', 'maxi', 'pendek', 'panjang', 'short', 'long']
+        },
+        'sedang': {
+            'include': ['sedang', 'medium', 'midi'],
+            'exclude': ['mini', 'maxi', 'pendek', 'panjang', 'short', 'long']
+        },
+        'lengan panjang': {
+            'include': ['lengan panjang', 'panjang lengan', 'long sleeve', 'long-sleeve'],
+            'exclude': ['lengan pendek', 'pendek lengan', 'short sleeve', 'short-sleeve', 'pendek']
+        },
+        'panjang lengan': {
+            'include': ['panjang lengan', 'lengan panjang', 'long sleeve', 'long-sleeve'],
+            'exclude': ['lengan pendek', 'pendek lengan', 'short sleeve', 'short-sleeve', 'pendek']
+        },
+        'long sleeve': {
+            'include': ['long sleeve', 'long-sleeve', 'lengan panjang', 'panjang lengan'],
+            'exclude': ['short sleeve', 'short-sleeve', 'lengan pendek', 'pendek lengan']
+        },
+        'lengan pendek': {
+            'include': ['lengan pendek', 'pendek lengan', 'short sleeve', 'short-sleeve'],
+            'exclude': ['lengan panjang', 'panjang lengan', 'long sleeve', 'long-sleeve', 'panjang']
+        },
+        'pendek lengan': {
+            'include': ['pendek lengan', 'lengan pendek', 'short sleeve', 'short-sleeve'],
+            'exclude': ['lengan panjang', 'panjang lengan', 'long sleeve', 'long-sleeve', 'panjang']
+        },
+        'short sleeve': {
+            'include': ['short sleeve', 'short-sleeve', 'lengan pendek', 'pendek lengan'],
+            'exclude': ['long sleeve', 'long-sleeve', 'lengan panjang', 'panjang lengan']
+        },
+        
+        # Sizes/Fits - ALL ORIGINAL SIZES
+        'small': {
+            'include': ['small', 'kecil', 's'],
+            'exclude': []
+        },
+        'kecil': {
+            'include': ['kecil', 'small', 's'],
+            'exclude': []
+        },
+        'medium': {
+            'include': ['medium', 'sedang', 'm'],
+            'exclude': []
+        },
+        'sedang': {
+            'include': ['sedang', 'medium', 'm'],
+            'exclude': []
+        },
+        'large': {
+            'include': ['large', 'besar', 'l'],
+            'exclude': []
+        },
+        'besar': {
+            'include': ['besar', 'large', 'l'],
+            'exclude': []
+        },
+        'extra large': {
+            'include': ['extra large', 'xl', 'sangat besar'],
+            'exclude': []
+        },
+        'tight': {
+            'include': ['tight', 'ketat'],
+            'exclude': []
+        },
+        'loose': {
+            'include': ['loose', 'longgar'],
+            'exclude': []
+        },
+        
+        # Occasions - ALL ORIGINAL OCCASIONS
+        'office': {
+            'include': ['office', 'kantor', 'kerja'],
+            'exclude': []
+        },
+        'kantor': {
+            'include': ['kantor', 'office', 'kerja'],
+            'exclude': []
+        },
+        'party': {
+            'include': ['party', 'pesta'],
+            'exclude': []
+        },
+        'pesta': {
+            'include': ['pesta', 'party'],
+            'exclude': []
+        },
+        'wedding': {
+            'include': ['wedding', 'pernikahan'],
+            'exclude': []
+        },
+        'pernikahan': {
+            'include': ['pernikahan', 'wedding'],
+            'exclude': []
+        },
+        'beach': {
+            'include': ['beach', 'pantai'],
+            'exclude': []
+        },
+        'pantai': {
+            'include': ['pantai', 'beach'],
+            'exclude': []
+        },
+        'sport': {
+            'include': ['sport', 'olahraga'],
+            'exclude': []
+        },
+        'olahraga': {
+            'include': ['olahraga', 'sport'],
+            'exclude': []
+        },
+    }
+    
+    # If the keyword has a direct mapping, return it
+    if keyword_lower in translation_map:
+        return translation_map[keyword_lower]
+    
+    # If no direct mapping, try to find partial matches
+    search_terms = [keyword_lower]
+    exclude_terms = []
+    
+    # Check if the keyword contains any mapped terms
+    for mapped_term, mapping in translation_map.items():
+        if mapped_term in keyword_lower or keyword_lower in mapped_term:
+            search_terms.extend(mapping['include'])
+            exclude_terms.extend(mapping['exclude'])
             break
     
-    # Update gender logic
-    should_update = False
-    
-    if detected_gender:
-        if not has_existing_gender:
-            # No existing gender - always update
-            should_update = True
-            print(f"   ✅ FIRST TIME GENDER DETECTION: {detected_gender}")
-            
-        elif current_gender.get("category") != detected_gender:
-            # Different gender detected - always update (user is changing)
-            should_update = True
-            old_gender = current_gender.get("category")
-            print(f"   🔄 GENDER CHANGE: {old_gender} → {detected_gender}")
-            
-        elif is_correction or force_update:
-            # Correction or forced update
-            should_update = True
-            print(f"   🔧 FORCED GENDER UPDATE: {detected_gender}")
-            
-        elif current_gender.get("confidence", 0) < confidence:
-            # Higher confidence detection
-            should_update = True
-            print(f"   📈 HIGHER CONFIDENCE UPDATE: {detected_gender} (conf: {confidence})")
-        
-        else:
-            print(f"   ⚪ SAME GENDER CONFIRMED: {detected_gender}")
-    
-    # Update gender if needed
-    if should_update and detected_gender:
-        old_gender = current_gender.get("category", "None")
-        user_context["user_gender"] = {
-            "category": detected_gender,
-            "term": detected_term,
-            "confidence": confidence,
-            "last_updated": datetime.now().isoformat(),
-            "is_correction": is_correction,
-            "previous_gender": old_gender if old_gender != "None" else None
-        }
-        
-        print(f"   ✅ GENDER UPDATED: {old_gender} → {detected_gender}")
-        print(f"   📊 Confidence: {confidence}, Is Correction: {is_correction}")
-        
-        return detected_gender
-    
-    # Return existing gender if available
-    if has_existing_gender:
-        existing_gender = current_gender["category"]
-        print(f"   📋 Using existing gender: {existing_gender}")
-        return existing_gender
-    
-    print(f"   ❌ No gender detected in input")
-    return None
+    # Remove duplicates and return
+    return {
+        'include': list(set(search_terms)),
+        'exclude': list(set(exclude_terms))
+    }
 
-async def fetch_products_from_db(db: AsyncSession, top_keywords: list, max_results=15, gender_category=None, budget_range=None):
+# Enhanced function to get all search terms for use in extract_ranked_keywords
+def get_all_search_terms_for_extraction(keyword):
     """
-    UPDATED: Product fetching with enhanced color preference prioritization
+    Helper function that uses the complete keyword mapping for extracting ranked keywords.
+    This integrates with extract_ranked_keywords to improve keyword processing.
     """
-    print(f"\n🔍 ENHANCED MULTI-CLOTHING PRODUCT SEARCH WITH COLOR PRIORITY")
-    print(f"📊 Keywords: {len(top_keywords)}")
+    search_mapping = get_search_terms_for_keyword(keyword)
     
-    # Extract clothing types from keywords
-    clothing_types = []
-    for i, (kw, score) in enumerate(top_keywords[:10]):
-        if FashionCategories.get_category(kw) == 'clothing_terms':
-            clothing_types.append(kw)
+    # Return all include terms for broader matching in keyword extraction
+    return search_mapping['include']
+
+async def fetch_products_from_db(db: AsyncSession, top_keywords: list, max_results=15, gender_category=None, budget_range=None, focus_category=None):
+    """
+    Enhanced product fetching with strict filtering and balanced distribution.
+    ALWAYS returns a DataFrame (empty if no results).
+    """
+    print("\n" + "="*80)
+    print("🔍 PRODUCT SEARCH WITH STRICT FILTERING & BALANCED DISTRIBUTION")
+    print("="*80)
+    print(f"📊 Total keywords received: {len(top_keywords)}")
+    print(f"🎯 Top 15 keywords being used:")
+    for i, (kw, score) in enumerate(top_keywords[:15]):
         print(f"   {i+1:2d}. '{kw}' → Score: {score:.2f}")
+    print(f"🎯 Focus category: {focus_category}")
+    print(f"👤 Gender filter: {gender_category}")
+    print(f"💰 Budget filter: {budget_range}")
     
-    print(f"🎯 Detected clothing types: {clothing_types}")
+    # Define clothing categories for balanced distribution
+    clothing_categories = {
+        'tops': ['kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 'sweater', 'hoodie', 'cardigan', 'blazer', 'tank', 'top'],
+        'bottoms_pants': ['celana', 'pants', 'jeans', 'trousers', 'leggings'],
+        'bottoms_skirts': ['rok', 'skirt'],
+        'dresses': ['dress', 'gaun', 'terusan'],
+        'outerwear': ['jaket', 'jacket', 'coat', 'mantel'],
+        'shorts': ['shorts', 'celana pendek']
+    }
     
-    # ENHANCED: Extract color preferences using the new function
-    # First, we need to reconstruct accumulated_keywords from top_keywords for color extraction
-    accumulated_keywords_for_colors = {}
-    for keyword, score in top_keywords:
-        # Simulate the accumulated keywords structure for color extraction
-        accumulated_keywords_for_colors[keyword] = {
-            "weight": score,
-            "source": "user_input" if score > 50000 else "unknown"  # High scores likely from user input
-        }
+    def get_clothing_category(keyword):
+        """Get clothing category for a keyword"""
+        keyword_lower = keyword.lower()
+        for category, terms in clothing_categories.items():
+            if any(term in keyword_lower for term in terms):
+                return category
+        return None
     
-    # Extract enhanced color preferences
-    enhanced_color_preferences = HybridKeywordExtractor.extract_color_preferences_enhanced(accumulated_keywords_for_colors)
+    # Analyze keywords to identify requested clothing categories
+    requested_categories = {}
+    category_keywords = {}
     
-    print(f"🎨 Enhanced color preferences: {[(color, weight) for color, weight in enhanced_color_preferences[:5]]}")
+    for keyword, score in top_keywords[:15]:
+        category = get_clothing_category(keyword)
+        if category:
+            if category not in requested_categories:
+                requested_categories[category] = 0
+                category_keywords[category] = []
+            requested_categories[category] += score
+            category_keywords[category].append((keyword, score))
+    
+    print(f"\n📦 CLOTHING CATEGORIES DETECTED:")
+    for category, total_score in requested_categories.items():
+        keywords_in_cat = [kw for kw, _ in category_keywords[category]]
+        print(f"   🏷️  {category}: {total_score:.1f} (keywords: {keywords_in_cat})")
+    
+    # ADD: Get exclusions from keyword extraction
+    exclusions = get_latest_exclusions()
+    if exclusions:
+        print(f"🚫 Product exclusions: {exclusions}")
+    else:
+        print("🚫 No product exclusions")
+    
+    print("="*80)
+    
+    logging.info(f"=== STRICT FILTERED PRODUCT SEARCH ===")
+    logging.info(f"Keywords: {[(kw, score) for kw, score in top_keywords[:10]]}")
+    logging.info(f"Categories: {requested_categories}")
+    logging.info(f"Gender: {gender_category}, Budget: {budget_range}")
+    logging.info(f"Exclusions: {exclusions}")
     
     try:
-        # Get products with variants (same query as before)
+        # Get products with variants
         variant_subquery = (
             select(
                 ProductVariant.product_id,
@@ -3633,6 +1384,7 @@ async def fetch_products_from_db(db: AsyncSession, top_keywords: list, max_resul
             .subquery()
         )
         
+        # Main query - NO ORDER BY, let Python handle sorting
         base_query = (
             select(
                 Product.product_id, 
@@ -3651,8 +1403,34 @@ async def fetch_products_from_db(db: AsyncSession, top_keywords: list, max_resul
             .join(ProductPhoto, Product.product_id == ProductPhoto.product_id)
             .where(variant_subquery.c.total_stock > 0)
         )
-        
-        # Apply filters (same as before)
+
+        if focus_category:
+            print(f"🎯 APPLYING CATEGORY FOCUS: {focus_category}")
+            
+            category_terms = {
+                'kemeja': ['kemeja', 'shirt', 'blouse', 'blus'],
+                'celana': ['celana', 'pants', 'trousers', 'jeans'],
+                'dress': ['dress', 'gaun', 'terusan'],
+                'jaket': ['jaket', 'jacket', 'blazer', 'coat'],
+                'kaos': ['kaos', 't-shirt', 'tshirt', 'tank'],
+                'atasan': ['atasan', 'top'],
+                'rok': ['rok', 'skirt']
+            }
+            
+            if focus_category in category_terms:
+                focus_terms = category_terms[focus_category]
+                
+                # Create OR condition for category terms
+                category_conditions = []
+                for term in focus_terms:
+                    category_conditions.append(Product.product_name.contains(term))
+                    category_conditions.append(Product.product_detail.contains(term))
+                
+                if category_conditions:
+                    base_query = base_query.where(or_(*category_conditions))
+                    print(f"   📝 Added category filter for: {focus_terms}")
+            
+        # Apply filters
         if gender_category:
             if gender_category.lower() in ['female', 'woman', 'perempuan', 'wanita']:
                 base_query = base_query.where(Product.product_gender == 'female')
@@ -3663,570 +1441,2287 @@ async def fetch_products_from_db(db: AsyncSession, top_keywords: list, max_resul
             min_price, max_price = budget_range
             if min_price and max_price:
                 base_query = base_query.where(variant_subquery.c.min_price.between(min_price, max_price))
+                print(f"💰 Budget filter: IDR {min_price:,} - IDR {max_price:,}")
             elif max_price:
                 base_query = base_query.where(variant_subquery.c.min_price <= max_price)
+                print(f"💰 Max budget: IDR {max_price:,}")
             elif min_price:
                 base_query = base_query.where(variant_subquery.c.min_price >= min_price)
+                print(f"💰 Min budget: IDR {min_price:,}")
         
         # Execute query
         result = await db.execute(base_query)
         all_products = result.fetchall()
         
         if not all_products:
-            print("❌ No products found")
+            print("❌ No products found in database")
+            # Return empty DataFrame with correct columns
             return pd.DataFrame(columns=["product_id", "product", "description", "price", "size", "color", "stock", "link", "photo", "relevance"])
         
-        print(f"\n📦 SCORING {len(all_products)} PRODUCTS WITH ENHANCED COLOR PRIORITY...")
-        print("=" * 60)
+        print(f"📦 Found {len(all_products)} products to analyze")
         
-        # ENHANCED: Calculate relevance scores with color preferences
-        scored_products = []
-        products_by_type = {}
+        # Calculate relevance scores with strict filtering
+        print(f"\n🧮 CALCULATING RELEVANCE SCORES WITH STRICT FILTERING...")
+        
+        categorized_products = {}
+        for category in requested_categories.keys():
+            categorized_products[category] = []
+        categorized_products['other'] = []  # For products that don't match specific categories
+        
+        debug_count = 0
+        strict_filter_failures = 0
         
         for product_row in all_products:
-            # UPDATED: Pass enhanced color preferences to relevance calculation
-            relevance_score = calculate_relevance_score(product_row, top_keywords, enhanced_color_preferences)
+            # Debug first 3 products in detail
+            debug_this_product = debug_count < 3
             
-            if relevance_score > 0:
-                # Determine which clothing type this product matches
-                product_name_lower = product_row[1].lower()
-                product_detail_lower = product_row[2].lower()
-                search_text = f"{product_name_lower} {product_detail_lower}"
+            if debug_this_product:
+                print(f"\n🔍 DEBUGGING PRODUCT {debug_count + 1}: '{product_row[1]}'")
+                print(f"   💰 Price: IDR {product_row[5]:,}")
+            
+            relevance_score = calculate_relevance_score(product_row, top_keywords, debug_this_product)
+            
+            # Skip products that failed strict filtering (score = 0)
+            if relevance_score == 0:
+                strict_filter_failures += 1
+                if debug_this_product:
+                    print(f"   🚫 PRODUCT EXCLUDED BY STRICT FILTERING")
+                continue
+            
+            # Determine which category this product belongs to
+            product_name_lower = product_row[1].lower()
+            product_detail_lower = product_row[2].lower()
+            product_text = f"{product_name_lower} {product_detail_lower}"
+            
+            product_category = None
+            best_category_match = 0
+            
+            # Find the best matching category for this product
+            for category, terms in clothing_categories.items():
+                category_match_score = 0
+                for term in terms:
+                    if term in product_text:
+                        category_match_score += len(term)  # Longer matches get higher scores
                 
-                matched_types = []
-                for clothing_type in clothing_types:
-                    if clothing_type.lower() in search_text:
-                        matched_types.append(clothing_type)
-                
-                product_data = {
-                    "product_id": product_row[0],
-                    "product": product_row[1],
-                    "description": product_row[2],
-                    "price": product_row[5],
-                    "size": ", ".join(product_row[6].split(',')) if product_row[6] else "N/A",
-                    "color": ", ".join(product_row[7].split(',')) if product_row[7] else "N/A", 
-                    "stock": product_row[8],
-                    "link": f"http://localhost/e-commerce-main/product-{product_row[3]}-{product_row[0]}",
-                    "photo": product_row[9],
-                    "relevance": relevance_score,
-                    "matched_types": matched_types
-                }
-                
-                scored_products.append(product_data)
-                
-                # Group by clothing type for balanced distribution
-                for clothing_type in matched_types:
-                    if clothing_type not in products_by_type:
-                        products_by_type[clothing_type] = []
-                    products_by_type[clothing_type].append(product_data)
+                if category_match_score > best_category_match:
+                    best_category_match = category_match_score
+                    product_category = category
+            
+            # Only assign to category if it's one of the requested categories
+            if product_category and product_category in requested_categories:
+                target_category = product_category
+            else:
+                target_category = 'other'
+            
+            if debug_this_product:
+                print(f"   📂 Categorized as: {target_category} (match score: {best_category_match})")
+                print(f"   📊 Final Relevance Score: {relevance_score:.2f}")
+                debug_count += 1
+            
+            # Format data
+            sizes = product_row[6].split(',') if product_row[6] else []
+            colors = product_row[7].split(',') if product_row[7] else []
+            
+            product_data = {
+                "product_id": product_row[0],
+                "product": product_row[1],
+                "description": product_row[2],
+                "price": product_row[5],
+                "size": ", ".join(sizes) if sizes else "N/A",
+                "color": ", ".join(colors) if colors else "N/A", 
+                "stock": product_row[8],
+                "link": f"http://localhost/e-commerce-main/product-{product_row[3]}-{product_row[0]}",
+                "photo": product_row[9],
+                "relevance": relevance_score,
+                "category": target_category
+            }
+            
+            categorized_products[target_category].append(product_data)
         
-        if not scored_products:
-            print("\n❌ NO PRODUCTS PASSED COLOR AND CONFLICT FILTERING")
-            return pd.DataFrame(columns=["product_id", "product", "description", "price", "size", "color", "stock", "link", "photo", "relevance"])
+        print(f"\n🚫 STRICT FILTERING RESULTS:")
+        print(f"   ❌ Products excluded: {strict_filter_failures}")
+        print(f"   ✅ Products passed: {sum(len(products) for products in categorized_products.values())}")
         
-        # ENHANCED: Ensure balanced representation but prioritize high color matches
+        # Sort products within each category by relevance
+        for category in categorized_products:
+            categorized_products[category].sort(key=lambda x: x['relevance'], reverse=True)
+        
+        print(f"\n📂 PRODUCTS BY CATEGORY AFTER STRICT FILTERING:")
+        for category, products in categorized_products.items():
+            if products:
+                print(f"   {category}: {len(products)} products")
+        
+        # BALANCED DISTRIBUTION LOGIC (same as before)
         final_products = []
         
-        # First, add products with highest relevance scores (likely good color matches)
-        all_scored = sorted(scored_products, key=lambda x: x['relevance'], reverse=True)
-        high_score_products = all_scored[:max_results//2]  # Take top half
-        final_products.extend(high_score_products)
-        
-        # Then, ensure clothing type distribution for remaining slots
-        remaining_slots = max_results - len(final_products)
-        if remaining_slots > 0 and clothing_types:
-            max_per_type = max(2, remaining_slots // len(clothing_types))
-            existing_ids = {p['product_id'] for p in final_products}
+        if len(requested_categories) > 1:
+            print(f"\n⚖️ APPLYING BALANCED DISTRIBUTION for {len(requested_categories)} categories")
             
-            print(f"\n🎯 DISTRIBUTING REMAINING {remaining_slots} PRODUCTS ACROSS {len(clothing_types)} CLOTHING TYPES:")
-            for clothing_type in clothing_types:
-                if clothing_type in products_by_type and remaining_slots > 0:
-                    type_products = sorted(products_by_type[clothing_type], 
-                                         key=lambda x: x['relevance'], reverse=True)
-                    
-                    added_for_type = 0
-                    for product in type_products:
-                        if (product['product_id'] not in existing_ids and 
-                            remaining_slots > 0 and added_for_type < max_per_type):
-                            final_products.append(product)
-                            existing_ids.add(product['product_id'])
-                            remaining_slots -= 1
-                            added_for_type += 1
-                    
-                    print(f"   📦 {clothing_type}: {added_for_type} additional products")
+            # Calculate products per category
+            products_per_category = max_results // len(requested_categories)
+            remaining_slots = max_results % len(requested_categories)
+            
+            print(f"   📊 Base allocation: {products_per_category} per category")
+            print(f"   ➕ Extra slots to distribute: {remaining_slots}")
+            
+            # Distribute products evenly across categories
+            category_list = list(requested_categories.keys())
+            for i, category in enumerate(category_list):
+                # Calculate allocation for this category
+                allocation = products_per_category
+                if i < remaining_slots:  # Distribute extra slots to first categories
+                    allocation += 1
+                
+                available_products = categorized_products.get(category, [])
+                selected_products = available_products[:allocation]
+                
+                print(f"   📦 {category}: taking {len(selected_products)}/{len(available_products)} (allocated: {allocation})")
+                
+                final_products.extend(selected_products)
+            
+            # Fill remaining slots with best products from any category if we're short
+            if len(final_products) < max_results:
+                remaining_needed = max_results - len(final_products)
+                print(f"   🔄 Need {remaining_needed} more products, checking other categories...")
+                
+                # Collect remaining products from all categories
+                all_remaining = []
+                for category, products in categorized_products.items():
+                    if category in requested_categories:
+                        # Take products beyond what we already selected
+                        allocation = products_per_category + (1 if category_list.index(category) < remaining_slots else 0)
+                        remaining_from_category = products[allocation:]
+                        all_remaining.extend(remaining_from_category)
+                    elif category == 'other':
+                        all_remaining.extend(products)
+                
+                # Sort remaining by relevance and take the best ones
+                all_remaining.sort(key=lambda x: x['relevance'], reverse=True)
+                final_products.extend(all_remaining[:remaining_needed])
+                
+                print(f"   ➕ Added {min(len(all_remaining), remaining_needed)} additional products")
         
-        # Create DataFrame and sort by relevance (color-prioritized)
+        else:
+            print(f"\n📦 SINGLE CATEGORY REQUEST - Using standard relevance sorting")
+            # Single category - use all products sorted by relevance
+            all_products_list = []
+            for products in categorized_products.values():
+                all_products_list.extend(products)
+            
+            all_products_list.sort(key=lambda x: x['relevance'], reverse=True)
+            final_products = all_products_list[:max_results]
+        
+        # Convert to DataFrame
         products_df = pd.DataFrame(final_products)
-        products_df = products_df.sort_values(by=['relevance'], ascending=False).reset_index(drop=True)
         
-        # Take top results
-        final_results = products_df[:max_results]
+        # APPLY EXCLUSION FILTERING
+        if exclusions and not products_df.empty:
+            print(f"\n🚫 APPLYING EXCLUSION FILTERING...")
+            original_count = len(products_df)
+            
+            for exclusion in exclusions:
+                # Remove products whose name or description contains excluded terms
+                mask = ~(
+                    products_df['product'].str.lower().str.contains(exclusion, na=False) |
+                    products_df['description'].str.lower().str.contains(exclusion, na=False)
+                )
+                products_df = products_df[mask]
+                
+                current_count = len(products_df)
+                removed_this_round = original_count - current_count
+                if removed_this_round > 0:
+                    print(f"   ❌ Excluded '{exclusion}': removed {removed_this_round} products")
+                    original_count = current_count
+            
+            total_removed = len(final_products) - len(products_df)
+            if total_removed > 0:
+                print(f"   🗑️ Total filtered out: {total_removed} products with excluded terms")
+                print(f"   ✅ Remaining products: {len(products_df)}")
+            else:
+                print(f"   ✅ No products were filtered out")
         
-        print(f"\n✅ FINAL COLOR-PRIORITIZED RESULTS: {len(final_results)} PRODUCTS")
-        for i, row in final_results.iterrows():
-            matched_types = row.get('matched_types', ['unknown'])
-            colors = row['color']
-            print(f"   {i+1:2d}. '{row['product']}' | Colors: {colors} | Score: {row['relevance']:.0f} | Types: {matched_types}")
+        # Final sorting by relevance within the balanced selection
+        if not products_df.empty:
+            products_df = products_df.sort_values(by=['relevance'], ascending=False).reset_index(drop=True)
+            
+            print(f"\n🏆 FINAL STRICT FILTERED & BALANCED PRODUCT DISTRIBUTION:")
+            
+            # Show distribution by category
+            if 'category' in products_df.columns:
+                category_counts = products_df['category'].value_counts()
+                for category, count in category_counts.items():
+                    print(f"   📦 {category}: {count} products")
+            
+            print(f"\n🏆 TOP {min(10, len(products_df))} PRODUCTS AFTER STRICT FILTERING:")
+            for i, row in products_df.head(10).iterrows():
+                category_display = f" [{row.get('category', 'unknown')}]" if 'category' in row else ""
+                print(f"   {i+1:2d}. '{row['product'][:40]}...'${category_display} → Relevance: {row['relevance']:.2f}, Price: IDR {row['price']:,}")
+            
+            print(f"\n✅ RETURNING {len(products_df)} STRICTLY FILTERED PRODUCTS")
+        else:
+            print(f"\n❌ NO PRODUCTS REMAINING AFTER STRICT FILTERING")
+            products_df = pd.DataFrame(columns=["product_id", "product", "description", "price", "size", "color", "stock", "link", "photo", "relevance"])
         
-        # Remove the matched_types column before returning
-        if 'matched_types' in final_results.columns:
-            final_results = final_results.drop('matched_types', axis=1)
+        print("="*80)
         
-        return final_results
+        return products_df
         
     except Exception as e:
-        logging.error(f"Error in enhanced color-priority fetch_products_from_db: {str(e)}")
+        logging.error(f"Error in fetch_products_from_db: {str(e)}")
+        print(f"❌ ERROR in fetch_products_from_db: {str(e)}")
+        # Always return empty DataFrame with correct columns instead of None
         return pd.DataFrame(columns=["product_id", "product", "description", "price", "size", "color", "stock", "link", "photo", "relevance"])
-        
-def calculate_relevance_score(product_row, keywords, color_preferences=None):
+            
+def calculate_relevance_score(product_row, keywords, debug=False, focus_category=None):
     """
-    ENHANCED: Calculate relevance score using FashionCategories conflict groups
+    Enhanced relevance calculation with fair clothing detection and balanced scoring.
+    Returns 0 if product fails strict filtering criteria.
     """
     product_name = product_row[1].lower()
     product_detail = product_row[2].lower()
     available_colors = product_row[7].lower() if product_row[7] else ""
     
     search_text = f"{product_name} {product_detail} {available_colors}"
+
+    if debug:
+        print(f"   🔍 Search text: '{search_text[:100]}...'")
+        print(f"   🎯 Focus category: {focus_category}")
+        print(f"   📝 Checking against {len(keywords)} keywords:")
+    
+    # Define color synonyms for common colors (flexible approach)
+    color_synonyms = {
+        'black': ['black', 'hitam', 'gelap'],
+        'white': ['white', 'putih', 'ivory', 'cream', 'off-white'],
+        'red': ['red', 'merah', 'crimson', 'burgundy', 'maroon'],
+        'blue': ['blue', 'biru', 'navy', 'royal', 'cobalt', 'azure'],
+        'green': ['green', 'hijau', 'lime', 'olive', 'emerald', 'forest'],
+        'yellow': ['yellow', 'kuning', 'golden', 'amber', 'mustard'],
+        'brown': ['brown', 'coklat', 'cokelat', 'tan', 'khaki', 'chocolate'],
+        'pink': ['pink', 'merah muda', 'rose', 'blush', 'coral'],
+        'purple': ['purple', 'ungu', 'violet', 'lavender', 'plum'],
+        'orange': ['orange', 'oranye', 'peach', 'tangerine'],
+        'grey': ['grey', 'gray', 'abu-abu', 'silver', 'charcoal'],
+        'gold': ['gold', 'emas', 'golden'],
+        'beige': ['beige', 'krem', 'nude', 'sand', 'taupe']
+    }
+    
+    def detect_color_from_keyword(keyword):
+        """
+        Enhanced flexible color detection that PROPERLY excludes skin color contexts.
+        Returns the color term if found, None otherwise.
+        """
+        keyword_lower = keyword.lower().strip()
+        
+        if debug:
+            print(f"      🔍 Checking color detection for: '{keyword}'")
+        
+        # FIRST: Check for skin color contexts and exclude them - ENHANCED PATTERNS
+        skin_color_patterns = [
+            r'\b(?:kulit|skin)\s+([a-zA-Z]+)\b',  # "kulit putih", "skin white"
+            r'\b([a-zA-Z]+)\s+(?:kulit|skin)\b',  # "putih kulit", "white skin"  
+            r'\b(?:berkulit|has\s+skin)\s+([a-zA-Z]+)\b',  # "berkulit putih"
+            r'\b(?:skin\s+tone|warna\s+kulit)\s+([a-zA-Z]+)\b',  # "skin tone white"
+            r'\b(?:complexion|warna\s+kulit)\s+([a-zA-Z]+)\b',  # "complexion fair"
+        ]
+        
+        # Check the ORIGINAL keyword input, not just the processed version
+        original_context = keyword  # This should be the full original input
+        
+        for pattern in skin_color_patterns:
+            match = re.search(pattern, original_context.lower())
+            if match:
+                if debug:
+                    print(f"      🚫 SKIN COLOR CONTEXT DETECTED: '{keyword}' in '{original_context}' - NOT a clothing color requirement")
+                return None
+        
+        # SECOND: Check if this specific keyword appears near skin-related words
+        # This is important for when individual color words are extracted from "kulit putih"
+        if keyword_lower in ['putih', 'white', 'hitam', 'black', 'coklat', 'brown', 'tan', 'fair', 'dark']:
+            # For common skin colors, be extra careful about context
+            skin_indicators = ['kulit', 'skin', 'berkulit', 'complexion', 'tone']
+            
+            # Check if any skin indicators appear near this color word
+            # This would catch cases where "putih" is extracted from "kulit putih"
+            if any(indicator in original_context.lower() for indicator in skin_indicators):
+                if debug:
+                    print(f"      🚫 SKIN COLOR FILTERED: '{keyword}' appears with skin indicators in '{original_context}'")
+                return None
+        
+        # THIRD: Check for physical/body contexts and exclude them
+        physical_contexts = [
+            r'\b(?:tinggi|height|berat|weight|umur|age)\b',
+            r'\b(?:cm|kg|tahun|years?)\b',
+            r'\b(?:dari|from)\s+(?:indonesia|malaysia|singapore)\b',
+            r'\b(?:cowo|cowok|cewe|cewek|pria|wanita|laki-laki|perempuan)\b',
+        ]
+        
+        for pattern in physical_contexts:
+            if re.search(pattern, original_context.lower()):
+                if debug:
+                    print(f"      🚫 PHYSICAL CONTEXT: '{keyword}' appears in physical description - skipping color detection")
+                return None
+        
+        # FOURTH: Only proceed with color detection if it's clearly clothing-related
+        # Check for clothing context indicators
+        clothing_indicators = [
+            'kemeja', 'shirt', 'dress', 'gaun', 'celana', 'pants', 'rok', 'skirt',
+            'jaket', 'jacket', 'kaos', 't-shirt', 'atasan', 'bawahan', 'pakai',
+            'warna', 'color', 'baju'
+        ]
+        
+        has_clothing_context = any(indicator in original_context.lower() for indicator in clothing_indicators)
+        
+        # If no clothing context and it's a common skin color, skip
+        if not has_clothing_context and keyword_lower in ['putih', 'white', 'hitam', 'black', 'coklat', 'brown', 'tan']:
+            if debug:
+                print(f"      🚫 NO CLOTHING CONTEXT: '{keyword}' has no clothing indicators, likely skin color")
+            return None
+        
+        # FIFTH: Proceed with normal color detection only if passed all filters above
+        # Check known color synonyms
+        for base_color, synonyms in color_synonyms.items():
+            if any(synonym in keyword_lower for synonym in synonyms):
+                if debug:
+                    print(f"      ✅ CLOTHING COLOR DETECTED: '{keyword_lower}' (passed all skin color filters)")
+                return keyword_lower
+        
+        # Enhanced color detection patterns (only if no physical context)
+        color_patterns = [
+            r'\bwarna\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)*)\b',
+            r'\b([a-zA-Z]+(?:\s+[a-zA-Z]+)*)\s+(?:colored?|colou?red?)\b',
+            r'\b(light|dark|bright|deep|pale|soft|muted|vivid|intense|pastel|neon|electric|terang|gelap)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)*)\b',
+            r'\b(navy|maroon|burgundy|teal|coral|salmon|olive|mint|rose|cherry|lemon|peach|cream|vanilla|chocolate|coffee|wine)\b',
+        ]
+        
+        for i, pattern in enumerate(color_patterns):
+            match = re.search(pattern, keyword_lower)
+            if match:
+                if i == 0:  # "warna X" pattern
+                    color_part = match.group(1).strip()
+                    if debug:
+                        print(f"      ✅ CLOTHING COLOR DETECTED: 'warna {color_part}' (explicit color pattern)")
+                    return f"warna {color_part}"
+                elif i == 1:  # "X colored" pattern  
+                    color_part = match.group(1).strip()
+                    if debug:
+                        print(f"      ✅ CLOTHING COLOR DETECTED: '{color_part}' (colored pattern)")
+                    return color_part
+                elif i == 2:  # "modifier + color" pattern
+                    modifier = match.group(1).strip()
+                    color_part = match.group(2).strip()
+                    if debug:
+                        print(f"      ✅ CLOTHING COLOR DETECTED: '{modifier} {color_part}' (modifier pattern)")
+                    return f"{modifier} {color_part}"
+                else:
+                    if debug:
+                        print(f"      ✅ CLOTHING COLOR DETECTED: '{match.group(0).strip()}' (special color)")
+                    return match.group(0).strip()
+        
+        if debug:
+            print(f"      ❌ NO COLOR DETECTED: '{keyword}' is not a recognizable color")
+        return None
+    
+    detect_color_from_keyword.original_input = ' '.join([kw for kw, _ in keywords])
+
+    def detect_color_in_product(product_text, color_term):
+        """
+        Enhanced check if a color term or its variations exist in product text.
+        Handles "warna X" patterns and modifiers better.
+        """
+        if not color_term:
+            return False
+            
+        # Handle "warna X" pattern specifically
+        warna_match = re.search(r'warna\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)*)', color_term.lower())
+        if warna_match:
+            actual_color = warna_match.group(1).strip()
+            
+            if actual_color in product_text or f"warna {actual_color}" in product_text:
+                return True
+            
+            # Also check synonyms for the extracted color
+            for base_color, synonyms in color_synonyms.items():
+                if actual_color in synonyms or any(synonym in actual_color for synonym in synonyms):
+                    if any(synonym in product_text for synonym in synonyms):
+                        return True
+        
+        # Handle modifier + color patterns
+        modifier_match = re.search(r'(light|dark|bright|deep|pale|soft|muted|vivid|intense|pastel|neon|electric|terang|gelap)\s+([a-zA-Z]+)', color_term.lower())
+        if modifier_match:
+            modifier = modifier_match.group(1)
+            main_color = modifier_match.group(2)
+            
+            if color_term.lower() in product_text:
+                return True
+            
+            if main_color in product_text:
+                return True
+            
+            if modifier in product_text and main_color in product_text:
+                return True
+                
+            # Check synonyms for main color
+            for base_color, synonyms in color_synonyms.items():
+                if main_color in synonyms or any(synonym in main_color for synonym in synonyms):
+                    if any(synonym in product_text for synonym in synonyms):
+                        return True
+        
+        # Direct match
+        if color_term.lower() in product_text:
+            return True
+        
+        # Check if it's a known color with synonyms
+        for base_color, synonyms in color_synonyms.items():
+            if color_term in synonyms or any(synonym in color_term for synonym in synonyms):
+                if any(synonym in product_text for synonym in synonyms):
+                    return True
+        
+        # Partial matching for compound colors
+        color_words = color_term.split()
+        if len(color_words) > 1:
+            for word in color_words:
+                if len(word) > 3:
+                    if word not in ['light', 'dark', 'bright', 'deep', 'pale', 'soft', 'warna', 'color', 'colored', 'terang', 'gelap']:
+                        if word in product_text:
+                            return True
+                        
+                        for base_color, synonyms in color_synonyms.items():
+                            if word in synonyms:
+                                if any(synonym in product_text for synonym in synonyms):
+                                    return True
+        
+        return False
+    
+    # Define strict filtering categories with flexible color handling
+    strict_filters = {
+        'fits': {
+            'oversized': ['oversized', 'oversize', 'loose fit', 'longgar', 'besar'],
+            'slim': ['slim', 'slim fit', 'ketat', 'skinny'],
+            'regular': ['regular', 'normal', 'standard'],
+            'fitted': ['fitted', 'fit', 'pas badan'],
+            'tight': ['tight', 'ketat sekali', 'sangat ketat'],
+            'loose': ['loose', 'longgar', 'rileks']
+        },
+        'sleeve_lengths': {
+            'sleeveless': ['sleeveless', 'tanpa lengan', 'tank', 'singlet'],
+            'short_sleeve': ['short sleeve', 'lengan pendek', 'pendek lengan', 'short-sleeve'],
+            'three_quarter': ['3/4 sleeve', 'three quarter', 'lengan 3/4'],
+            'long_sleeve': ['long sleeve', 'lengan panjang', 'panjang lengan', 'long-sleeve'],
+            'cap_sleeve': ['cap sleeve', 'lengan kap']
+        },
+        'clothing_lengths': {
+            'crop': ['crop', 'cropped', 'pendek', 'short'],
+            'regular_length': ['regular length', 'normal', 'standard'],
+            'tunic': ['tunic', 'panjang', 'longline'],
+            'maxi': ['maxi', 'maksimal', 'sangat panjang'],
+            'mini': ['mini', 'sangat pendek'],
+            'midi': ['midi', 'sedang', 'medium length'],
+            'knee_length': ['knee length', 'sebatas lutut'],
+            'ankle_length': ['ankle length', 'sebatas mata kaki']
+        }
+    }
+    
+    # Extract user requirements from keywords with flexible color detection
+    user_requirements = {
+        'colors': [],
+        'fits': [],
+        'sleeve_lengths': [],
+        'clothing_lengths': []
+    }
     
     total_score = 0
-    conflict_penalty = 0
-    matched_keywords = []  # Track which keywords matched
-    color_bonus = 0
-    matched_colors = []
+    matches_found = []
+    strict_violations = []
     
-    # NEW: Use FashionCategories conflict groups
-    conflict_groups = FashionCategories.get_conflict_groups()
-    
-    # Extract user preferences from keywords for each conflict group
-    user_preferences_by_group = {}
-    high_score_keywords = []
-    
+    # First pass: identify user requirements with flexible color detection
     for i, (keyword, weight) in enumerate(keywords[:15]):
         keyword_lower = keyword.lower()
         
-        # Track high-scoring keywords for preference detection
-        if weight > 5000000:  # High priority keywords
-            high_score_keywords.append(keyword_lower)
-        
-        # NEW: Detect user preferences using FashionCategories conflict groups
-        for group_name, group_data in conflict_groups.items():
-            conflict_mapping = group_data.get('conflicts', {})
+        # FLEXIBLE COLOR DETECTION with context awareness
+        detected_color = detect_color_from_keyword(keyword_lower)
+        if detected_color:
+            # QUICK FIX: Check if any keyword contains skin context with this color
+            has_skin_context = any(
+                re.search(rf'\b(?:kulit|skin)\s+{re.escape(detected_color)}\b', kw.lower()) 
+                for kw, _ in keywords
+            )
             
-            for pref_type, terms in conflict_mapping.items():
-                if any(term in keyword_lower or keyword_lower in term for term in terms):
-                    if group_name not in user_preferences_by_group:
-                        user_preferences_by_group[group_name] = []
-                    user_preferences_by_group[group_name].append((keyword_lower, weight, pref_type))
+            if has_skin_context:
+                if debug:
+                    print(f"      🚫 SKIN COLOR FILTERED: '{detected_color}' found with 'kulit/skin' context")
+            elif detected_color not in user_requirements['colors']:
+                user_requirements['colors'].append(detected_color)
+                if debug:
+                    print(f"      🎨 CLOTHING COLOR REQUIREMENT: {detected_color} (from '{keyword}')")
+        # Check other strict filter categories (non-color)
+        for filter_category, filter_options in strict_filters.items():
+            for option_name, option_terms in filter_options.items():
+                if any(term in keyword_lower for term in option_terms):
+                    if option_name not in user_requirements[filter_category]:
+                        user_requirements[filter_category].append(option_name)
+                        if debug:
+                            print(f"      🎯 REQUIREMENT: {filter_category} = {option_name} (from '{keyword}')")
     
-    print(f"🔍 ANALYZING PRODUCT: '{product_row[1]}'")
-    print(f"   📋 User preferences by group: {user_preferences_by_group}")
-    print(f"   🎯 High score keywords: {high_score_keywords}")
-    if color_preferences:
-        print(f"   🎨 Color preferences: {[color for color, weight in color_preferences]}")
+    if debug:
+        print(f"   📋 User Requirements Summary:")
+        for category, requirements in user_requirements.items():
+            if requirements:
+                print(f"      {category}: {requirements}")
     
-    # NEW: Check for conflicts using FashionCategories
-    for group_name in conflict_groups.keys():
-        if group_name not in user_preferences_by_group:
-            continue
-        
-        user_prefs = user_preferences_by_group[group_name]
-        has_conflict, conflict_details = FashionCategories.detect_conflicts_in_group(
-            group_name, user_prefs, search_text
-        )
-        
-        if has_conflict:
-            user_weight = conflict_details['user_weight']
-            conflicting_terms = conflict_details['conflicting_terms']
-            user_preference = conflict_details['user_preference']
-            user_keyword = conflict_details['user_keyword']
+    # Second pass: strict filtering check with flexible color matching
+    strict_filter_passed = True
+    
+    for filter_category, required_options in user_requirements.items():
+        if required_options:
+            category_matched = False
             
-            print(f"   🎯 {group_name.upper()}: User prefers '{user_preference}' ({user_keyword}) - weight: {user_weight:.0f}")
+            if filter_category == 'colors':
+                # FLEXIBLE COLOR MATCHING
+                for required_color in required_options:
+                    if detect_color_in_product(search_text, required_color):
+                        category_matched = True
+                        if debug:
+                            print(f"      ✅ FLEXIBLE COLOR MATCH: found '{required_color}' in product")
+                        break
+                
+                if not category_matched:
+                    strict_filter_passed = False
+                    strict_violations.append(f"colors: required {required_options}")
+                    if debug:
+                        print(f"      ❌ COLOR FILTER FAILED: required {required_options}")
             
-            # Apply penalty based on weight and conflict severity
-            if user_weight > 5000000:  # High priority preference
-                penalty = user_weight * 2.0  # Double penalty
-                conflict_penalty += penalty
-                print(f"   ❌ MAJOR CONFLICT: Product has {conflicting_terms} but user wants {user_preference}")
-                print(f"   💥 Applied penalty: {penalty:.0f}")
             else:
-                penalty = user_weight * 0.5  # Smaller penalty for lower priority
-                conflict_penalty += penalty
-                print(f"   ⚠️ Minor conflict: Product has {conflicting_terms} but user wants {user_preference}")
-                print(f"   💥 Applied penalty: {penalty:.0f}")
+                # Standard matching for non-color categories
+                for required_option in required_options:
+                    option_terms = strict_filters[filter_category][required_option]
+                    
+                    if any(term in search_text for term in option_terms):
+                        category_matched = True
+                        if debug:
+                            print(f"      ✅ STRICT FILTER PASSED: {filter_category} = {required_option}")
+                        break
+                
+                if not category_matched:
+                    strict_filter_passed = False
+                    strict_violations.append(f"{filter_category}: required {required_options}")
+                    if debug:
+                        print(f"      ❌ STRICT FILTER FAILED: {filter_category} required {required_options}")
     
-    # Calculate positive scores for matching keywords (same as before)
+    # If strict filtering fails, return 0 score (exclude product)
+    if not strict_filter_passed:
+        if debug:
+            print(f"   🚫 PRODUCT EXCLUDED due to strict filter violations: {strict_violations}")
+        return 0.0
+    
+    # NEW: Category focus boost/penalty
+    if focus_category:
+        category_terms = {
+            'kemeja': ['kemeja', 'shirt', 'blouse', 'blus'],
+            'celana': ['celana', 'pants', 'trousers', 'jeans'],
+            'dress': ['dress', 'gaun', 'terusan'],
+            'jaket': ['jaket', 'jacket', 'blazer', 'coat'],
+            'kaos': ['kaos', 't-shirt', 'tshirt', 'tank'],
+            'atasan': ['atasan', 'top'],
+            'rok': ['rok', 'skirt']
+        }
+        
+        if focus_category in category_terms:
+            focus_terms = category_terms[focus_category]
+            category_match = any(term in search_text for term in focus_terms)
+            
+            if category_match:
+                category_bonus = 2000  # Huge bonus for matching focus category
+                total_score += category_bonus
+                if debug:
+                    print(f"   🎯 CATEGORY FOCUS MATCH: +{category_bonus}")
+            else:
+                # Heavy penalty for not matching focus category
+                if debug:
+                    print(f"   ❌ CATEGORY FOCUS MISMATCH: Heavy penalty applied")
+                return 0  # Return 0 to exclude non-matching products
+    
+    # Third pass: calculate relevance score with FAIR clothing detection
     for i, (keyword, weight) in enumerate(keywords[:15]):
         keyword_lower = keyword.lower()
         
-        # Position importance
+        # Position importance (earlier keywords are more important)
         position_weight = (15 - i) / 15
         
         match_score = 0
+        match_type = "NO_MATCH"
         
-        # Exact match bonus
-        if keyword_lower in search_text:
-            matched_keywords.append(keyword_lower)  # Track matched keywords
+        # Check if keyword is a clothing item (all get equal treatment)
+        is_clothing, _ = is_clothing_item_with_priority(keyword_lower)
+        
+        # PRIORITY 1: All clothing items - EQUAL TREATMENT
+        if is_clothing:
+            clothing_base_score = 5.0  # Same for all clothing types
             
             if keyword_lower in product_name:
-                match_score = weight * position_weight * 3.0
-                print(f"   ✅ EXACT NAME MATCH: '{keyword_lower}' → +{match_score:.0f}")
+                match_score = weight * position_weight * clothing_base_score
+                match_type = "CLOTHING_NAME_MATCH"
             elif keyword_lower in product_detail:
+                match_score = weight * position_weight * (clothing_base_score * 0.8)
+                match_type = "CLOTHING_DESC_MATCH"
+            elif any(part in search_text for part in keyword_lower.split()):
+                match_score = weight * position_weight * (clothing_base_score * 0.6)
+                match_type = "CLOTHING_PARTIAL_MATCH"
+            else:
+                match_score = weight * position_weight * (clothing_base_score * 0.4)
+                match_type = "CLOTHING_WEAK_MATCH"
+        
+        # PRIORITY 2: Style features - EQUAL with each other
+        elif any(feature in keyword_lower for feature in ['lengan', 'sleeve', 'oversized', 'slim', 'loose', 'tight', 'panjang', 'pendek', 'fitted', 'regular']):
+            if keyword_lower in search_text:
+                match_score = weight * position_weight * 2.5
+                match_type = "STYLE_MATCH"
+        
+        # PRIORITY 2: Color matches - EQUAL with style features  
+        elif detect_color_in_product(search_text, keyword_lower):
+            match_score = weight * position_weight * 2.5
+            match_type = "COLOR_MATCH"
+        
+        # PRIORITY 2: Material/fabric matches - EQUAL with style/color
+        elif any(material in keyword_lower for material in ['cotton', 'katun', 'silk', 'sutra', 'denim', 'wool', 'polyester', 'linen']):
+            if keyword_lower in search_text:
+                match_score = weight * position_weight * 2.5
+                match_type = "MATERIAL_MATCH"
+        
+        # PRIORITY 3: Exact keyword match (non-clothing)
+        elif keyword_lower in search_text:
+            if keyword_lower in product_name:
                 match_score = weight * position_weight * 2.0
-                print(f"   ✅ DETAIL MATCH: '{keyword_lower}' → +{match_score:.0f}")
+                match_type = "NAME_MATCH"
+            elif keyword_lower in product_detail:
+                match_score = weight * position_weight * 1.5
+                match_type = "DESC_MATCH"
             else:
                 match_score = weight * position_weight * 1.0
-                print(f"   ✅ COLOR MATCH: '{keyword_lower}' → +{match_score:.0f}")
-            
-            total_score += match_score
+                match_type = "OTHER_MATCH"
         
-        # Partial match
+        # PRIORITY 4: Partial match (lowest)
         elif any(word in search_text for word in keyword_lower.split()):
-            partial_score = weight * position_weight * 0.5
-            total_score += partial_score
-            print(f"   ⚪ PARTIAL MATCH: '{keyword_lower}' → +{partial_score:.0f}")
-    
-    # Integrated color preference handling (same as before)
-    if color_preferences:
-        print(f"   🎨 ANALYZING COLOR PREFERENCES:")
+            match_score = weight * position_weight * 0.5
+            match_type = "PARTIAL"
         
-        for color, weight in color_preferences:
-            color_lower = color.lower()
+        if match_score > 0:
+            total_score += match_score
+            matches_found.append((keyword, match_type, match_score))
             
-            # Check for color matches with different strategies
-            exact_match = False
-            partial_match = False
-            synonym_match = False
-            translation_match = False
+            if debug:
+                print(f"      ✅ '{keyword}' → {match_type} (+{match_score:.2f})")
+        elif debug and i < 8:
+            print(f"      ❌ '{keyword}' → NO_MATCH")
+    
+    # Bonus for products that match strict requirements
+    if strict_filter_passed and any(user_requirements.values()):
+        strict_bonus = 50
+        total_score += strict_bonus
+        if debug:
+            print(f"   🎁 STRICT REQUIREMENTS BONUS: +{strict_bonus}")
+    
+    if debug:
+        print(f"   📊 Total matches found: {len(matches_found)}")
+        print(f"   🎯 Best matches: {[f'{kw}({mt})' for kw, mt, _ in matches_found[:3]]}")
+        print(f"   ✅ Strict filtering: {'PASSED' if strict_filter_passed else 'FAILED'}")
+        print(f"   🔢 Final score: {total_score:.2f}")
+    
+    return total_score
+
+async def fetch_products_with_budget_awareness(db: AsyncSession, top_keywords: list, max_results=15, gender_category=None, budget_range=None):
+    """
+    Enhanced product fetching that checks budget constraints and returns appropriate data.
+    """
+    logging.info(f"=== BUDGET-AWARE PRODUCT FETCH ===")
+    logging.info(f"Budget range: {budget_range}")
+    
+    # Clean up empty/invalid budget ranges
+    if budget_range == (None, None) or budget_range == [None, None]:
+        budget_range = None
+    
+    try:
+        if budget_range and any(budget_range):  # Only if budget has actual values
+            print(f"💰 Searching with budget constraint: {budget_range}")
+            products_within_budget = await fetch_products_from_db(db, top_keywords, max_results, gender_category, budget_range)
             
-            # Strategy 1: Exact word match
-            if f" {color_lower} " in f" {search_text} ":
-                exact_match = True
-            elif search_text.startswith(f"{color_lower} ") or search_text.endswith(f" {color_lower}"):
-                exact_match = True
-            elif color_lower == search_text:
-                exact_match = True
-            
-            # Strategy 2: Synonym matching using FashionCategories
-            if not exact_match:
-                synonyms = FashionCategories.get_color_synonyms(color_lower)
-                for synonym in synonyms:
-                    if synonym in search_text:
-                        synonym_match = True
-                        print(f"     🔄 SYNONYM MATCH: '{color_lower}' matched via '{synonym}'")
-                        break
-            
-            # Strategy 3: Translation matching using FashionCategories
-            if not exact_match and not synonym_match:
-                translated_color = FashionCategories.translate_color(color_lower)
-                if translated_color != color_lower and translated_color in search_text:
-                    translation_match = True
-                    print(f"     🌍 TRANSLATION MATCH: '{color_lower}' → '{translated_color}'")
-            
-            # Strategy 4: Partial match for compound colors
-            if not exact_match and not synonym_match and not translation_match:
-                color_parts = color_lower.split()
-                if len(color_parts) > 1:
-                    # For compound colors like "dark blue", "light pink"
-                    if all(part in search_text for part in color_parts if len(part) > 2):
-                        partial_match = True
-                        print(f"     🔗 COMPOUND MATCH: '{color_lower}' matched via parts")
-                elif any(color_part in search_text for color_part in color_lower.split() if len(color_part) > 2):
-                    partial_match = True
-                    print(f"     🔗 PARTIAL MATCH: '{color_lower}' matched partially")
-            
-            # Calculate color bonus based on match type
-            if exact_match:
-                color_bonus += weight * 0.4  # 40% bonus for exact color match
-                matched_colors.append(color_lower)
-                print(f"     ✅ EXACT COLOR MATCH: '{color_lower}' → +{weight * 0.4:.0f}")
-            elif translation_match:
-                color_bonus += weight * 0.38  # 38% bonus for translation match
-                matched_colors.append(f"{color_lower} (translated)")
-                print(f"     ✅ TRANSLATION COLOR MATCH: '{color_lower}' → +{weight * 0.38:.0f}")
-            elif synonym_match:
-                color_bonus += weight * 0.35  # 35% bonus for synonym match
-                matched_colors.append(f"{color_lower} (synonym)")
-                print(f"     ✅ SYNONYM COLOR MATCH: '{color_lower}' → +{weight * 0.35:.0f}")
-            elif partial_match:
-                color_bonus += weight * 0.2  # 20% bonus for partial color match
-                matched_colors.append(f"{color_lower} (partial)")
-                print(f"     ⚪ PARTIAL COLOR MATCH: '{color_lower}' → +{weight * 0.2:.0f}")
+            if products_within_budget is not None and not products_within_budget.empty:
+                logging.info(f"Found {len(products_within_budget)} products within budget")
+                return products_within_budget, "within_budget"
             else:
-                print(f"     ❌ NO COLOR MATCH: '{color_lower}'")
+                logging.info("No products found within budget range")
+                # Try without budget constraint to see if products exist at all
+                products_without_budget = await fetch_products_from_db(db, top_keywords, max_results, gender_category, None)
+                
+                if products_without_budget is not None and not products_without_budget.empty:
+                    logging.info(f"Found {len(products_without_budget)} products outside budget")
+                    return products_without_budget, "no_products_in_budget"
+                else:
+                    logging.info("No products found even without budget constraint")
+                    return pd.DataFrame(), "no_products_found"
+        else:
+            print(f"💰 No budget specified, searching normally")
+            # No budget specified, search normally
+            products = await fetch_products_from_db(db, top_keywords, max_results, gender_category, None)
+            
+            if products is not None and not products.empty:
+                logging.info(f"Found {len(products)} products without budget constraint")
+                return products, "no_budget_specified"
+            else:
+                logging.info("No products found")
+                return pd.DataFrame(), "no_products_found"
+                
+    except Exception as e:
+        logging.error(f"Error in fetch_products_with_budget_awareness: {str(e)}")
+        return pd.DataFrame(), "error"
+                    
+def generate_budget_message(budget_range, user_language, cheapest_price=None, most_expensive_price=None):
+    """
+    Generate appropriate budget constraint messages.
+    """
+    min_price, max_price = budget_range if budget_range else (None, None)
     
-    # Multi-match bonus calculation (same as before)
-    num_matches = len(matched_keywords)
-    multi_match_bonus = 0
+    # Create budget range text
+    if min_price and max_price:
+        budget_text = f"IDR {min_price:,} - IDR {max_price:,}"
+    elif max_price:
+        budget_text = f"under IDR {max_price:,}"
+    elif min_price:
+        budget_text = f"above IDR {min_price:,}"
+    else:
+        budget_text = "your specified budget"
     
-    if num_matches >= 2:
-        # Exponential bonus for products matching multiple criteria
-        if num_matches == 2:
-            multi_match_bonus = total_score * 0.10
-        elif num_matches == 3:
-            multi_match_bonus = total_score * 0.25
-        elif num_matches >= 4:
-            multi_match_bonus = total_score * 0.50
+    # Create price range text for alternatives
+    price_info = ""
+    if cheapest_price and most_expensive_price:
+        price_info = f"The available products range from IDR {cheapest_price:,} to IDR {most_expensive_price:,}."
+    elif cheapest_price:
+        price_info = f"The cheapest available option starts from IDR {cheapest_price:,}."
+    
+    # English messages
+    messages_en = {
+        "no_products": f"I couldn't find any products matching your preferences within {budget_text}. {price_info}\n\nWould you like me to:\n1. Show you options outside your budget range?\n2. Help you adjust your search criteria?\n\nPlease let me know your preference!",
         
-        print(f"   🎯 MULTI-MATCH BONUS: {num_matches} matches → +{multi_match_bonus:.0f} ({(multi_match_bonus/total_score*100):.1f}% bonus)")
-        total_score += multi_match_bonus
+        "show_outside_budget": f"I found some great options for you, but they're outside your {budget_text} range. {price_info}\n\nWould you like to see these recommendations anyway? You can reply with:\n- 'Yes' to see all options\n- 'No' to adjust your search\n- 'Adjust budget' to modify your price range",
+        
+        "budget_adjustment": "I understand you'd prefer to stay within your budget. Would you like to:\n1. Search for different product types?\n2. Adjust your budget range?\n3. Look for similar but more affordable alternatives?\n\nJust let me know what you'd prefer!"
+    }
     
-    # Apply conflict penalty and add color bonus
-    final_score = total_score + color_bonus - conflict_penalty
+    # Indonesian messages
+    messages_id = {
+        "no_products": f"Saya tidak dapat menemukan produk yang sesuai dengan preferensi Anda dalam rentang {budget_text}. {price_info}\n\nApakah Anda ingin saya:\n1. Tunjukkan pilihan di luar rentang anggaran Anda?\n2. Bantu menyesuaikan kriteria pencarian?\n\nSilakan beri tahu preferensi Anda!",
+        
+        "show_outside_budget": f"Saya menemukan beberapa pilihan bagus untuk Anda, tetapi berada di luar rentang {budget_text}. {price_info}\n\nApakah Anda ingin melihat rekomendasi ini?\n- 'Ya' untuk melihat semua pilihan\n- 'Tidak' untuk menyesuaikan pencarian\n- 'Sesuaikan anggaran' untuk mengubah rentang harga",
+        
+        "budget_adjustment": "Saya mengerti Anda lebih suka tetap dalam anggaran. Apakah Anda ingin:\n1. Mencari jenis produk yang berbeda?\n2. Menyesuaikan rentang anggaran?\n3. Mencari alternatif serupa yang lebih terjangkau?\n\nBeri tahu saya apa yang Anda inginkan!"
+    }
     
-    print(f"   📊 INTEGRATED SCORING SUMMARY:")
-    print(f"      Base positive score: {total_score - multi_match_bonus:.0f}")
-    print(f"      Multi-match bonus: {multi_match_bonus:.0f}")
-    print(f"      Color bonus: {color_bonus:.0f} ({len(matched_colors)} color matches)")
-    print(f"      Conflict penalty: {conflict_penalty:.0f}")
-    print(f"      Final score: {final_score:.0f}")
-    print(f"      Matched keywords: {matched_keywords}")
-    if matched_colors:
-        print(f"      Matched colors: {matched_colors}")
-    print(f"   {'🚫 REJECTED' if final_score < 0 else '✅ ACCEPTED'}")
-    print("-" * 60)
+    return messages_id if user_language != "en" else messages_en
+
+def detect_budget_response(user_input):
+    """
+    Detect user response to budget constraint messages.
+    Returns: "show_anyway" | "adjust_search" | "adjust_budget" | "unknown"
+    """
+    user_input_lower = user_input.lower().strip()
     
-    # Return 0 if conflicts outweigh positives
-    return max(final_score, 0)
+    # Positive responses - show products anyway
+    show_anyway_patterns = [
+        r'\b(yes|ya|iya|ok|okay|sure|tentu)\b',
+        r'\b(show|tunjukkan|tampilkan)\s+(anyway|saja|aja)\b',
+        r'\b(see|lihat)\s+(all|semua|them|mereka)\b',
+        r'\b(ignore|abaikan)\s+(budget|anggaran)\b',
+        r'\b(outside|di luar)\s+(budget|anggaran)\b',
+    ]
+    
+    # Negative responses - adjust search
+    adjust_search_patterns = [
+        r'\b(no|tidak|nope|nah)\b',
+        r'\b(adjust|sesuaikan|ubah)\s+(search|pencarian|kriteria)\b',
+        r'\b(different|berbeda|lain)\s+(product|produk|type|jenis)\b',
+        r'\b(stay|tetap)\s+(within|dalam)\s+(budget|anggaran)\b',
+    ]
+    
+    # Budget adjustment responses
+    adjust_budget_patterns = [
+        r'\b(adjust|sesuaikan|ubah)\s+(budget|anggaran|price|harga)\b',
+        r'\b(change|ganti)\s+(budget|anggaran)\b',
+        r'\b(increase|naikkan|tingkatkan)\s+(budget|anggaran)\b',
+        r'\b(decrease|turunkan|kurangi)\s+(budget|anggaran)\b',
+        r'\b(new|baru)\s+(budget|anggaran)\b',
+    ]
+    
+    for pattern in show_anyway_patterns:
+        if re.search(pattern, user_input_lower):
+            return "show_anyway"
+    
+    for pattern in adjust_budget_patterns:
+        if re.search(pattern, user_input_lower):
+            return "adjust_budget"
+    
+    for pattern in adjust_search_patterns:
+        if re.search(pattern, user_input_lower):
+            return "adjust_search"
+    
+    return "unknown"
+
+def detect_budget_adjustment_request(user_input):
+    """
+    Extract new budget information from user input.
+    Returns: (new_budget_range, confidence) or (None, 0)
+    """
+    # Use the existing extract_budget_from_text function
+    new_budget = extract_budget_from_text(user_input)
+    
+    if new_budget:
+        return new_budget, 1.0
+    
+    # Check for relative adjustments
+    increase_patterns = [
+        r'\b(increase|naikkan|tingkatkan)\s+(by|sebesar)?\s*(\d+)(?:rb|ribu|000|k)?\b',
+        r'\b(add|tambah)\s+(\d+)(?:rb|ribu|000|k)?\b',
+        r'\b(more|lebih)\s+(\d+)(?:rb|ribu|000|k)?\b',
+    ]
+    
+    decrease_patterns = [
+        r'\b(decrease|turunkan|kurangi)\s+(by|sebesar)?\s*(\d+)(?:rb|ribu|000|k)?\b',
+        r'\b(reduce|kurangi)\s+(\d+)(?:rb|ribu|000|k)?\b',
+        r'\b(less|kurang)\s+(\d+)(?:rb|ribu|000|k)?\b',
+    ]
+    
+    user_input_lower = user_input.lower()
+    
+    for pattern in increase_patterns:
+        match = re.search(pattern, user_input_lower)
+        if match:
+            amount_str = match.group(-1)  # Last captured group
+            try:
+                amount = int(amount_str)
+                if 'rb' in user_input_lower or 'ribu' in user_input_lower:
+                    amount *= 1000
+                return ("increase", amount), 0.8
+            except:
+                pass
+    
+    for pattern in decrease_patterns:
+        match = re.search(pattern, user_input_lower)
+        if match:
+            amount_str = match.group(-1)  # Last captured group
+            try:
+                amount = int(amount_str)
+                if 'rb' in user_input_lower or 'ribu' in user_input_lower:
+                    amount *= 1000
+                return ("decrease", amount), 0.8
+            except:
+                pass
+    
+    return None, 0
+
+def detect_new_clothing_request(user_input):
+    """
+    Detect if user is making a new clothing request (more comprehensive than the previous version)
+    """
+    user_input_lower = user_input.lower()
+    
+    # Clothing request patterns
+    clothing_request_patterns = [
+        # Direct requests
+        r'\b(carikan|tunjukkan|show|find|cari)\s+\w+',
+        r'\b(ada|any)\s+\w+\s+(yang|that)',
+        r'\b(mau|want|ingin|need)\s+\w+',
+        
+        # Specific clothing items
+        r'\b(kemeja|shirt|blouse|dress|gaun|celana|pants|rok|skirt|jaket|jacket|kaos|t-shirt)\b',
+        
+        # Color + clothing combinations
+        r'\b(hitam|putih|merah|biru|black|white|red|blue)\s+(kemeja|shirt|dress|pants|celana)\b',
+        r'\b(kemeja|shirt|dress|pants|celana)\s+(hitam|putih|merah|biru|black|white|red|blue)\b',
+        
+        # Style + clothing combinations
+        r'\b(oversized|slim|loose|tight)\s+(kemeja|shirt|dress|pants)\b',
+        r'\b(lengan\s+panjang|lengan\s+pendek|long\s+sleeve|short\s+sleeve)\b',
+    ]
+    
+    for pattern in clothing_request_patterns:
+        if re.search(pattern, user_input_lower):
+            print(f"   🎯 NEW CLOTHING REQUEST PATTERN MATCHED: {pattern}")
+            return True
+    
+    # Check if input contains clothing items
+    clothing_categories = get_shared_clothing_categories()
+    for category, terms in clothing_categories.items():
+        if any(term in user_input_lower for term in terms):
+            print(f"   👕 CLOTHING ITEM DETECTED: {terms} in category {category}")
+            return True
+    
+    return False
+
+def detect_search_adjustment_response(user_input):
+    """
+    Detect user response to "no products found" options.
+    Returns: "different_style" | "different_type" | "general_search" | "new_clothing_request" | "unknown"
+    """
+    user_input_lower = user_input.lower()
+    
+    # Check for new clothing request first (highest priority)
+    if detect_new_clothing_request(user_input):
+        return "new_clothing_request"
+    
+    # Option 1: Different style preferences
+    style_patterns = [
+        r'\b(1|satu|one|first|pertama)\b',
+        r'\b(style|gaya|different style|gaya berbeda)\b',
+        r'\b(preference|preferensi|style preference)\b'
+    ]
+    
+    # Option 2: Different clothing types
+    type_patterns = [
+        r'\b(2|dua|two|second|kedua)\b',
+        r'\b(clothing|pakaian|different clothing|pakaian berbeda)\b',
+        r'\b(type|jenis|clothing type|jenis pakaian)\b'
+    ]
+    
+    # Option 3: More general search
+    general_patterns = [
+        r'\b(3|tiga|three|third|ketiga)\b',
+        r'\b(general|umum|more general|lebih umum)\b',
+        r'\b(search|pencarian|general search|pencarian umum)\b'
+    ]
+    
+    for pattern in style_patterns:
+        if re.search(pattern, user_input_lower):
+            return "different_style"
+    
+    for pattern in type_patterns:
+        if re.search(pattern, user_input_lower):
+            return "different_type"
+    
+    for pattern in general_patterns:
+        if re.search(pattern, user_input_lower):
+            return "general_search"
+    
+    return "unknown"
 
 def get_paginated_products(all_products_df, page=0, products_per_page=5):
-    """Get paginated products"""
+    """
+    Helper function to get a specific page of products from the full results.
+    This is a SYNCHRONOUS function - no async/await needed.
+    
+    Args:
+        all_products_df: DataFrame with all products
+        page: Page number (0-based)
+        products_per_page: Number of products per page
+    
+    Returns:
+        tuple: (paginated_products_df, has_more_pages)
+    """
     if all_products_df.empty:
+        logging.info("No products available for pagination")
         return pd.DataFrame(columns=["product_id", "product", "description", "price", "size", "color", "stock", "link", "photo", "relevance"]), False
     
     start_idx = page * products_per_page
     end_idx = start_idx + products_per_page
     
+    # Get the slice for this page
     paginated_products = all_products_df.iloc[start_idx:end_idx]
+    
+    # Check if there are more pages
     has_more = end_idx < len(all_products_df)
     
+    logging.info(f"📄 Pagination: Page {page}, showing products {start_idx+1}-{min(end_idx, len(all_products_df))} of {len(all_products_df)}")
+    logging.info(f"📊 Has more pages: {has_more}")
+    
     return paginated_products, has_more
-
+    
 def detect_more_products_request(user_input: str) -> bool:
-    """Detect if user is asking for more products"""
+    """
+    Detect if user is asking for more products - more precise to avoid conflicts
+    """
     more_patterns = [
+        # English patterns
         r'\b(more|other|another|additional|different|else)\s+(product|item|option|choice|recommendation)',
         r'\b(show|give|find|get)\s+(me\s+)?(more|other|another|additional)',
         r'\b(what|anything)\s+else',
+        r'\b(more|other)\s+(suggestion|option|choice)',
+        r'\belse\s+(do\s+you\s+have|available)',
+        
+        # Indonesian patterns  
         r'\b(lain|lainnya|yang lain|lagi)\b',
         r'\b(tunjukkan|carikan|kasih|coba)\s+(yang\s+)?(lain|lainnya)',
+        r'\b(ada\s+)?(yang\s+)?(lain|lainnya)',
+        r'\b(produk|barang|item)\s+(lain|lainnya)',
+        r'\b(pilihan|opsi)\s+(lain|lainnya)',
+        r'\b(apa\s+lagi|apalagi)',
+        r'\b(selain\s+itu|besides)',
+        r'\b(lebih\s+banyak|more)',
+        r'\bapa\s+lagi\b',
+        r'\belse\s+(do\s+you\s+have|available)',
+        r'\blainnya\b.*\b(produk|barang|pilihan)',
     ]
     
     user_input_lower = user_input.lower().strip()
     
-    # Don't trigger on simple confirmations
-    simple_responses = ["yes", "ya", "iya", "ok", "okay", "sure", "tentu", "no", "tidak"]
+    # CRITICAL: Don't trigger on simple confirmations
+    simple_responses = ["yes", "ya", "iya", "ok", "okay", "sure", "tentu", "no", "tidak", "nope", "ga", "engga"]
     if user_input_lower in simple_responses:
+        return False
+    
+    # Don't trigger on very short responses (likely confirmations)
+    if len(user_input_lower.split()) <= 2 and user_input_lower not in ["apa lagi", "yang lain", "show more"]:
         return False
     
     for pattern in more_patterns:
         if re.search(pattern, user_input_lower):
+            logging.info(f"Detected specific 'more products' request: {user_input}")
             return True
     
     return False
 
-def detect_and_extract_budget(user_input, user_context):
+def detect_new_product_search(user_input, current_keywords):
     """
-    NEW: Detect and extract budget information from user input
+    Detect if user is asking for a completely different product category.
+    Returns: (is_new_search, confidence_level)
     """
-    if not user_input:
+    user_input_lower = user_input.lower()
+    
+    # Define product categories with more granular classification
+    product_categories = {
+        'shirts': ['kemeja', 'shirt', 'blouse', 'blus'],
+        'tshirts': ['t-shirt', 'tshirt', 'kaos', 'tank top'],
+        'tops_other': ['atasan', 'top', 'sweater', 'cardigan', 'hoodie'],
+        'outerwear': ['jacket', 'jaket', 'coat', 'mantel', 'blazer'],
+        'bottoms_pants': ['celana', 'pants', 'jeans', 'trousers'],
+        'bottoms_skirts': ['rok', 'skirt'],
+        'bottoms_general': ['bawahan', 'bottom', 'shorts'],
+        'dresses': ['dress', 'gaun', 'terusan'],
+        'footwear': ['sepatu', 'shoes', 'sandal', 'boot', 'sneaker'],
+        'accessories': ['tas', 'bag', 'topi', 'hat', 'belt', 'ikat pinggang', 'scarf', 'syal'],
+        'undergarments': ['underwear', 'bra', 'dalam', 'celana dalam']
+    }
+    
+    # Group related categories (less aggressive reset between related items)
+    category_groups = {
+        'tops': ['shirts', 'tshirts', 'tops_other'],
+        'bottoms': ['bottoms_pants', 'bottoms_skirts', 'bottoms_general'],
+        'full_garments': ['dresses', 'outerwear'],
+        'accessories': ['footwear', 'accessories', 'undergarments']
+    }
+    
+    # Check what category user is asking for now
+    current_request_categories = []
+    for category, terms in product_categories.items():
+        if any(term in user_input_lower for term in terms):
+            current_request_categories.append(category)
+    
+    # Check what categories were in previous search
+    previous_categories = []
+    if current_keywords:
+        for category, terms in product_categories.items():
+            for keyword, _ in current_keywords[:8]:  # Check more keywords for better detection
+                if any(term in keyword.lower() for term in terms):
+                    previous_categories.append(category)
+                    break
+    
+    # Calculate change intensity
+    change_intensity = 0
+    change_type = "none"
+    
+    if current_request_categories and previous_categories:
+        # Check if categories are in different groups
+        current_groups = []
+        previous_groups = []
+        
+        for group, categories in category_groups.items():
+            if any(cat in current_request_categories for cat in categories):
+                current_groups.append(group)
+            if any(cat in previous_categories for cat in categories):
+                previous_groups.append(group)
+        
+        if current_groups and previous_groups:
+            if not any(group in previous_groups for group in current_groups):
+                change_intensity = 3  # Major category change (tops -> bottoms)
+                change_type = "major_category"
+            elif not any(cat in previous_categories for cat in current_request_categories):
+                change_intensity = 2  # Related category change (shirts -> t-shirts)
+                change_type = "related_category"
+            else:
+                change_intensity = 1  # Same or very similar category
+                change_type = "minor"
+    
+    # Check for explicit new search indicators with different weights
+    explicit_patterns = {
+        'strong': [
+            r'\b(now|sekarang)\s+(show|tunjukkan|carikan|cari)\b',
+            r'\b(instead|sebagai gantinya|ganti)\b',
+            r'\b(different|berbeda|lain)\s+(type|jenis|product|item|barang)\b',
+            r'\b(what about|bagaimana dengan|gimana)\s+.*\b(bottom|bawahan|pants|celana|top|atasan|dress|gaun)\b',
+            r'\b(suitable|cocok|sesuai)\s+(bottom|bawahan|pants|celana|top|atasan)\b',
+        ],
+        'medium': [
+            r'\b(also|juga)\s+(show|tunjukkan)\b',
+            r'\b(recommend|rekomendasikan)\s+(some|beberapa)?\s*(different|lain|other)\b',
+            r'\b(any|ada)\s+(suggestion|saran|recommendations|rekomendasi)\s+(for|untuk)\b',
+        ],
+        'weak': [
+            r'\b(more|lebih)\s+(options|pilihan|choices)\b',
+            r'\b(other|lain|lainnya)\s+(styles|gaya|options)\b',
+        ]
+    }
+    
+    pattern_intensity = 0
+    for intensity, patterns in explicit_patterns.items():
+        for pattern in patterns:
+            if re.search(pattern, user_input_lower):
+                if intensity == 'strong':
+                    pattern_intensity = max(pattern_intensity, 3)
+                    print(f"🔄 STRONG new search pattern: {pattern}")
+                elif intensity == 'medium':
+                    pattern_intensity = max(pattern_intensity, 2)
+                    print(f"🔄 MEDIUM new search pattern: {pattern}")
+                elif intensity == 'weak':
+                    pattern_intensity = max(pattern_intensity, 1)
+                    print(f"🔄 WEAK new search pattern: {pattern}")
+                break
+    
+    # Combine intensities
+    final_intensity = max(change_intensity, pattern_intensity)
+    
+    print(f"🔍 Change Analysis:")
+    print(f"   Current categories: {current_request_categories}")
+    print(f"   Previous categories: {previous_categories}")
+    print(f"   Change type: {change_type}")
+    print(f"   Category intensity: {change_intensity}")
+    print(f"   Pattern intensity: {pattern_intensity}")
+    print(f"   Final intensity: {final_intensity}")
+    
+    return final_intensity >= 2, final_intensity
+
+
+def smart_preserve_keywords(user_context, change_intensity):
+    """
+    Flexible keyword preservation based on change intensity and keyword characteristics.
+    """
+    if "accumulated_keywords" not in user_context:
+        return {}
+    
+    preserved_keywords = {}
+    current_keywords = user_context["accumulated_keywords"]
+    
+    # Define keyword categories with preservation priority
+    keyword_categories = {
+        'user_identity': {
+            'terms': ['perempuan', 'wanita', 'female', 'woman', 'pria', 'laki-laki', 'male', 'man'],
+            'preserve_threshold': 1,  # Always preserve
+            'weight_reduction': 0.1   # Minimal reduction
+        },
+        'physical_attributes': {
+            'terms': ['tinggi', 'height', 'berat', 'weight', 'kulit', 'skin', 'slim', 'kurus', 
+                     'gemuk', 'besar', 'kecil', 'tall', 'short', 'pendek'],
+            'preserve_threshold': 1,  # Always preserve
+            'weight_reduction': 0.2
+        },
+        'style_preferences': {
+            'terms': ['formal', 'resmi', 'casual', 'santai', 'elegant', 'elegan', 'vintage', 'modern',
+                     'minimalist', 'minimalis', 'bohemian', 'boho', 'streetwear'],
+            'preserve_threshold': 3,  # Preserve unless major change
+            'weight_reduction': 0.5
+        },
+        'fit_preferences': {
+            'terms': ['oversized', 'longgar', 'loose', 'ketat', 'tight', 'fit'],
+            'preserve_threshold': 2,  # Preserve unless major change
+            'weight_reduction': 0.4
+        },
+        'color_preferences': {
+            'terms': ['hitam', 'black', 'putih', 'white', 'merah', 'red', 'biru', 'blue', 
+                     'hijau', 'green', 'kuning', 'yellow', 'coklat', 'brown', 'abu-abu', 'grey'],
+            'preserve_threshold': 3,  # Only preserve for minor changes
+            'weight_reduction': 0.5
+        },
+        'specific_features': {
+            'terms': ['lengan panjang', 'lengan pendek', 'long sleeve', 'short sleeve', 'panjang', 'pendek',
+                     'kerah', 'collar', 'kantong', 'pocket', 'kancing', 'button'],
+            'preserve_threshold': 3,  # Only preserve for minor changes
+            'weight_reduction': 0.6
+        },
+        'product_specific': {
+            'terms': ['kemeja', 'shirt', 't-shirt', 'kaos', 'dress', 'gaun', 'celana', 'pants', 
+                     'rok', 'skirt', 'jaket', 'jacket', 'atasan', 'bawahan'],
+            'preserve_threshold': 4,  # Never preserve
+            'weight_reduction': 1.0
+        }
+    }
+    
+    print(f"🔄 PRESERVING KEYWORDS (change intensity: {change_intensity})")
+    
+    for keyword, data in current_keywords.items():
+        should_preserve = False
+        weight_reduction = 0.6 # Default reduction
+        category_matched = "uncategorized"
+        
+        # Check which category this keyword belongs to
+        for category, config in keyword_categories.items():
+            if any(term in keyword.lower() for term in config['terms']):
+                category_matched = category
+                if change_intensity < config['preserve_threshold']:
+                    should_preserve = True
+                    weight_reduction = config['weight_reduction']
+                break
+        
+        # Additional preservation logic for high-weight keywords
+        if not should_preserve and data["weight"] > 200:
+            # Very high weight keywords might be important user preferences
+            should_preserve = True
+            weight_reduction = 0.5
+            category_matched = "high_weight"
+            print(f"   → Preserving high-weight keyword: '{keyword}'")
+        
+        # Additional preservation for recent keywords
+        if not should_preserve and data.get("count", 1) >= 3:
+            # Frequently mentioned keywords might be important
+            should_preserve = True
+            weight_reduction = 0.6
+            category_matched = "frequent"
+            print(f"   → Preserving frequent keyword: '{keyword}'")
+        
+        if should_preserve:
+            new_weight = data["weight"] * (1 - weight_reduction)
+            preserved_keywords[keyword] = {
+                "weight": new_weight,
+                "count": data["count"],
+                "first_seen": data["first_seen"],
+                "source": data["source"],
+                "preserved_reason": category_matched
+            }
+            print(f"   ✅ Preserved '{keyword}' ({category_matched}): {data['weight']:.1f} → {new_weight:.1f}")
+        else:
+            print(f"   ❌ Removed '{keyword}' ({category_matched})")
+    
+    return preserved_keywords
+
+def smart_keyword_context_update(user_input, user_context, new_keywords, is_user_input=False):
+    """
+    ENHANCED: Updated context management that removes conflicting clothing keywords.
+    """
+    print(f"\n📝 SMART ENHANCED KEYWORD UPDATE WITH CLOTHING CONFLICT REMOVAL")
+    print("="*50)
+    
+    # Debug: Show state before update
+    if "accumulated_keywords" in user_context:
+        acc_kw = user_context["accumulated_keywords"]
+        print(f"📚 BEFORE - {len(acc_kw)} accumulated keywords")
+        if acc_kw:
+            sorted_kw = sorted(acc_kw.items(), key=lambda x: x[1].get("weight", 0), reverse=True)
+            print(f"   🏆 Top 5 BEFORE:")
+            for i, (kw, data) in enumerate(sorted_kw[:5]):
+                source_icon = "👤" if data.get("source") == "user_input" else "🤖"
+                category = data.get("category", "unknown")
+                print(f"      {i+1}. {source_icon} '{kw}' → {data.get('weight', 0):.1f} ({category})")
+    
+    # Get current accumulated keywords for change detection
+    current_accumulated = []
+    if "accumulated_keywords" in user_context:
+        current_accumulated = [(k, v["weight"]) for k, v in user_context["accumulated_keywords"].items()]
+    
+    # Detect clothing type changes
+    category_changed = detect_fashion_category_change(user_input, user_context)
+    
+    # Define clothing type categories with conflicting relationships
+    clothing_type_categories = {
+        'tops': {
+            'keywords': ['kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 'sweater', 'hoodie', 'cardigan', 'blazer', 'tank', 'top'],
+            'conflicts_with': ['bottoms', 'dresses', 'outerwear_specific']
+        },
+        'bottoms': {
+            'keywords': ['celana', 'pants', 'rok', 'skirt', 'jeans', 'shorts', 'leggings', 'trouser', 'bawahan'],
+            'conflicts_with': ['tops', 'dresses']
+        },
+        'dresses': {
+            'keywords': ['dress', 'gaun', 'terusan', 'sundress', 'maxi dress', 'mini dress'],
+            'conflicts_with': ['tops', 'bottoms']
+        },
+        'outerwear_specific': {
+            'keywords': ['jaket', 'jacket', 'coat', 'mantel'],
+            'conflicts_with': ['tops']  # Outerwear conflicts less, mainly with casual tops
+        },
+        'accessories': {
+            'keywords': ['tas', 'bag', 'sepatu', 'shoes', 'topi', 'hat', 'belt', 'scarf'],
+            'conflicts_with': []  # Accessories don't conflict
+        }
+    }
+    
+    def get_clothing_category(keyword):
+        """Determine which clothing category a keyword belongs to"""
+        keyword_lower = keyword.lower()
+        for category, data in clothing_type_categories.items():
+            if any(cloth_kw in keyword_lower for cloth_kw in data['keywords']):
+                return category
         return None
+    
+    def find_new_clothing_categories(keywords):
+        """Find clothing categories in new keywords"""
+        categories = set()
+        for keyword, _ in keywords:
+            category = get_clothing_category(keyword)
+            if category:
+                categories.add(category)
+        return categories
+    
+    def find_existing_clothing_categories(accumulated_keywords):
+        """Find clothing categories in existing accumulated keywords"""
+        categories = set()
+        for keyword, data in accumulated_keywords.items():
+            category = get_clothing_category(keyword)
+            if category:
+                categories.add(category)
+        return categories
+    
+    # Apply enhanced keyword decay
+    apply_keyword_decay(user_context)
+    
+    # Find clothing categories in new and existing keywords
+    new_clothing_categories = find_new_clothing_categories(new_keywords)
+    existing_clothing_categories = find_existing_clothing_categories(user_context.get("accumulated_keywords", {}))
+    
+    print(f"🔍 CLOTHING CATEGORY ANALYSIS:")
+    print(f"   📦 New categories: {new_clothing_categories}")
+    print(f"   📚 Existing categories: {existing_clothing_categories}")
+    
+    # Check for clothing type conflicts
+    conflicting_keywords_to_remove = []
+    
+    if new_clothing_categories and existing_clothing_categories:
+        for new_category in new_clothing_categories:
+            if new_category in clothing_type_categories:
+                conflicts_with = clothing_type_categories[new_category]['conflicts_with']
+                
+                # Check if any existing categories conflict with new ones
+                conflicting_existing = existing_clothing_categories.intersection(conflicts_with)
+                
+                if conflicting_existing:
+                    print(f"⚔️  CONFLICT DETECTED: New '{new_category}' conflicts with existing {conflicting_existing}")
+                    
+                    # Find keywords to remove from conflicting categories
+                    for keyword, data in user_context.get("accumulated_keywords", {}).items():
+                        keyword_category = get_clothing_category(keyword)
+                        if keyword_category in conflicting_existing:
+                            conflicting_keywords_to_remove.append(keyword)
+                            print(f"   🗑️  Will remove conflicting keyword: '{keyword}' (category: {keyword_category})")
+    
+    # Remove conflicting keywords
+    if conflicting_keywords_to_remove:
+        for keyword in conflicting_keywords_to_remove:
+            if keyword in user_context["accumulated_keywords"]:
+                removed_data = user_context["accumulated_keywords"][keyword]
+                del user_context["accumulated_keywords"][keyword]
+                print(f"   ❌ Removed conflicting: '{keyword}' (was {removed_data.get('weight', 0):.1f})")
+        
+        print(f"🧹 Removed {len(conflicting_keywords_to_remove)} conflicting clothing keywords")
+    
+    # Handle major category changes (existing logic)
+    if category_changed:
+        print("🔄 MAJOR FASHION CATEGORY CHANGE - Smart selective reset")
+        
+        # Enhanced preservation that maintains change detection capability
+        preserved_keywords = smart_preserve_keywords(user_context, change_intensity=3)
+        user_context["accumulated_keywords"] = preserved_keywords
+        
+        # Clear product cache
+        user_context["product_cache"] = {
+            "all_results": pd.DataFrame(),
+            "current_page": 0,
+            "products_per_page": 5,
+            "has_more": False
+        }
+    
+    # Apply category-based scoring to new keywords
+    enhanced_new_keywords = []
+    for keyword, weight in new_keywords:
+        category_multiplier = get_keyword_category_multiplier(keyword)
+        enhanced_weight = weight * category_multiplier
+        enhanced_new_keywords.append((keyword, enhanced_weight))
+        
+        if enhanced_weight != weight:
+            print(f"   ⚖️  '{keyword}': {weight:.1f} × {category_multiplier} = {enhanced_weight:.1f}")
+    
+    # Add new keywords with enhanced weights
+    update_accumulated_keywords(enhanced_new_keywords, user_context, is_user_input=is_user_input)
+    
+    # Post-update cleanup that preserves change detection keywords
+    persistence_config = {
+        'clothing_items': {'decay_rate': 0.1, 'max_age_minutes': 120},
+        'style_attributes': {'decay_rate': 0.15, 'max_age_minutes': 90},
+        'colors': {'decay_rate': 0.2, 'max_age_minutes': 60},
+        'gender_terms': {'decay_rate': 0.05, 'max_age_minutes': 240},
+        'occasions': {'decay_rate': 0.4, 'max_age_minutes': 30},
+        'default': {'decay_rate': 0.25, 'max_age_minutes': 45}
+    }
+    
+    category_cleanup(user_context, persistence_config)
+    
+    # Debug: Show final state
+    final_count = len(user_context.get("accumulated_keywords", {}))
+    print(f"\n📊 AFTER ENHANCED UPDATE WITH CONFLICT REMOVAL:")
+    print(f"   📈 Total keywords: {final_count}")
+    
+    if final_count > 0:
+        sorted_final = sorted(user_context["accumulated_keywords"].items(), 
+                             key=lambda x: x[1].get("weight", 0), reverse=True)
+        print(f"   🏆 Top 5 AFTER:")
+        for i, (kw, data) in enumerate(sorted_final[:5]):
+            source_icon = "👤" if data.get("source") == "user_input" else "🤖"
+            category = data.get("category", "unknown")
+            clothing_cat = get_clothing_category(kw)
+            cat_display = f"{category}/{clothing_cat}" if clothing_cat else category
+            print(f"      {i+1}. {source_icon} '{kw}' → {data.get('weight', 0):.1f} ({cat_display})")
+    
+    print("="*50)
+
+def extract_specific_clothing_request(user_input, ai_response):
+    """
+    Extract what specific clothing item the user is asking for vs. what they want to pair it with.
+    Returns: (wanted_items, context_items)
+    """
+    user_input_lower = user_input.lower()
+    ai_response_lower = ai_response.lower() if ai_response else ""
+    
+    print(f"   🔍 ANALYZING REQUEST: '{user_input}'")
+    
+    # Primary clothing items user is asking for
+    clothing_requests = {
+        'kemeja': ['kemeja', 'shirt', 'blouse', 'blus'],
+        'celana': ['celana', 'pants', 'trousers', 'jeans'],
+        'dress': ['dress', 'gaun', 'terusan'],
+        'rok': ['rok', 'skirt'],
+        'jaket': ['jaket', 'jacket', 'blazer', 'coat'],
+        'kaos': ['kaos', 't-shirt', 'tshirt', 'tank top'],
+        'sweater': ['sweater', 'cardigan', 'hoodie'],
+        'atasan': ['atasan', 'top', 'blouse'],
+        'bawahan': ['bawahan', 'bottom']
+    }
+    
+    # Context items (what they want to pair WITH)
+    pairing_indicators = [
+        'dipadukan dengan', 'dipasangkan dengan', 'cocok dengan', 'pair with', 'match with',
+        'untuk', 'dengan', 'sama', 'bareng', 'yang cocok dengan'
+    ]
+    
+    wanted_items = []
+    context_items = []
+    
+    # NEW: Handle "X yang cocok untuk Y" pattern specifically
+    compatibility_patterns = [
+        r'\b(\w+)\s+yang\s+cocok\s+untuk\s+(\w+)',  # "kemeja yang cocok untuk celana"
+        r'\bcarikan\s+(\w+)\s+yang\s+cocok\s+untuk\s+(\w+)',  # "carikan kemeja yang cocok untuk celana"
+        r'\btunjukkan\s+(\w+)\s+yang\s+cocok\s+untuk\s+(\w+)',  # "tunjukkan kemeja yang cocok untuk celana"
+        r'\bada\s+(\w+)\s+yang\s+cocok\s+untuk\s+(\w+)',  # "ada kemeja yang cocok untuk celana"
+        r'\b(\w+)\s+yang\s+sesuai\s+untuk\s+(\w+)',  # "kemeja yang sesuai untuk celana"
+        r'\b(\w+)\s+yang\s+pas\s+untuk\s+(\w+)',  # "kemeja yang pas untuk celana"
+    ]
+    
+    compatibility_found = False
+    
+    for pattern in compatibility_patterns:
+        compatibility_match = re.search(pattern, user_input_lower)
+        
+        if compatibility_match:
+            primary_item = compatibility_match.group(1).strip()
+            context_item = compatibility_match.group(2).strip()
+            
+            print(f"   🎯 COMPATIBILITY PATTERN DETECTED: '{primary_item}' yang cocok untuk '{context_item}'")
+            
+            # Find which categories these belong to
+            primary_category = None
+            context_category = None
+            
+            for category, terms in clothing_requests.items():
+                # Check if primary_item matches any terms
+                if any(term in primary_item or primary_item in term for term in terms):
+                    primary_category = category
+                    print(f"      🎯 Primary item '{primary_item}' mapped to category: {primary_category}")
+                
+                # Check if context_item matches any terms  
+                if any(term in context_item or context_item in term for term in terms):
+                    context_category = category
+                    print(f"      📝 Context item '{context_item}' mapped to category: {context_category}")
+            
+            if primary_category:
+                wanted_items.append(primary_category)
+                print(f"   🎯 WANTED: {primary_category} (from compatibility pattern)")
+            
+            if context_category:
+                context_items.append(context_category)
+                print(f"   📝 CONTEXT: {context_category} (from compatibility pattern)")
+            
+            compatibility_found = True
+            break  # Found a pattern, no need to check others
+    
+    # If we found the compatibility pattern, prioritize it and return early
+    if compatibility_found:
+        print(f"   📊 COMPATIBILITY ANALYSIS - WANTED: {wanted_items}, CONTEXT: {context_items}")
+        return wanted_items, context_items
+    
+    print(f"   ❌ No compatibility pattern found, trying direct request patterns...")
+    
+    # EXISTING LOGIC: Find what user specifically asked for (only if no compatibility pattern found)
+    for category, terms in clothing_requests.items():
+        for term in terms:
+            # Check if it's a direct request (question words + clothing item)
+            direct_request_patterns = [
+                rf'\b(?:apa|what|mana|which|ada|show|tunjukkan|carikan)\s+.*?{term}\b',
+                rf'\b{term}\s+(?:apa|what|yang|mana)\b',
+                rf'^{term}\b',  # At start of sentence
+            ]
+            
+            for pattern in direct_request_patterns:
+                if re.search(pattern, user_input_lower):
+                    if category not in wanted_items:
+                        wanted_items.append(category)
+                        print(f"   🎯 WANTED: {category} (from '{term}' - direct request)")
+            
+            # Check if it's mentioned as context/pairing
+            for indicator in pairing_indicators:
+                if indicator in user_input_lower:
+                    # Look for clothing terms after pairing indicators
+                    pairing_pattern = rf'{indicator}\s+.*?{term}\b'
+                    if re.search(pairing_pattern, user_input_lower):
+                        if category not in context_items:
+                            context_items.append(category)
+                            print(f"   📝 CONTEXT: {category} (for pairing with '{term}')")
+    
+    # If AI response mentions specific recommendations, add those as wanted
+    if ai_response:
+        try:
+            bold_items = extract_bold_headings_from_ai_response(ai_response)
+            for item in bold_items:
+                item_lower = item.lower()
+                for category, terms in clothing_requests.items():
+                    if any(term in item_lower for term in terms):
+                        if category not in wanted_items:
+                            wanted_items.append(category)
+                            print(f"   🤖 AI RECOMMENDED: {category} (from bold: '{item}')")
+        except:
+            pass
+    
+    print(f"   📊 FINAL ANALYSIS - WANTED: {wanted_items}, CONTEXT: {context_items}")
+    return wanted_items, context_items
+
+def get_shared_clothing_categories():
+    """Shared clothing categories used by both fetch_products_from_db and calculate_relevance_score"""
+    return {
+        'tops': ['kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 'sweater', 'hoodie', 'cardigan', 'blazer', 'tank', 'top'],
+        'bottoms_pants': ['celana', 'pants', 'jeans', 'trousers', 'leggings'],
+        'bottoms_skirts': ['rok', 'skirt'],
+        'dresses': ['dress', 'gaun', 'terusan'],
+        'outerwear': ['jaket', 'jacket', 'coat', 'mantel'],
+        'shorts': ['shorts', 'celana pendek']
+    }
+
+def is_clothing_item_with_priority(keyword):
+    """Check if keyword is clothing and return equal priority for fairness"""
+    kw_lower = keyword.lower()
+    clothing_categories = get_shared_clothing_categories()
+    
+    # Check if it's ANY clothing item
+    for category, terms in clothing_categories.items():
+        if any(term in kw_lower for term in terms):
+            return True, 5.0  # ALL clothing items get EQUAL priority
+    
+    # General clothing terms
+    general_clothing = ['baju', 'pakaian', 'outfit', 'clothing', 'wear']
+    if any(term in kw_lower for term in general_clothing):
+        return True, 4.5  # Slightly lower for general terms
+    
+    return False, 0  # Not clothing
+
+def extract_ranked_keywords(ai_response: str = None, translated_input: str = None, accumulated_keywords=None):
+    """
+    CORRECTED: Context-aware keyword extraction with PRESERVED conflict resolution for single-type changes
+    but ALLOWS multi-item requests when explicitly requested.
+    """
+    print("\n" + "="*60)
+    print("🔤 ENHANCED KEYWORD EXTRACTION WITH SMART CONFLICT RESOLUTION")
+    print("="*60)
+    
+    keyword_scores = {}
+    global_exclusions = set()
+
+    # Simple responses filter
+    simple_responses = {
+        "yes", "ya", "iya", "oke", "ok", "okay", "sure", "tentu",
+        "no", "tidak", "nope", "ga", "gak", "engga", "nah",
+        "good", "bagus", "nice", "baik", "great", "mantap",
+        "thanks", "terima", "kasih", "makasih", "thx"
+    }
+    
+    # Initialize variables
+    current_input_categories = set()
+    wanted_items = []
+    context_items = []
+    
+    # Define clothing categories
+    clothing_categories = get_shared_clothing_categories()
+    
+    # RESTORED: Define clothing conflicts (but make them smarter)
+    clothing_conflicts = {
+        'kemeja': {
+            'keywords': ['kemeja', 'shirt', 'blouse', 'blus'],
+            'conflicts_with': ['celana', 'dress', 'rok']  # Shirts conflict with bottoms/dresses
+        },
+        'celana': {
+            'keywords': ['celana', 'pants', 'jeans', 'trousers'],
+            'conflicts_with': ['kemeja', 'dress', 'atasan', 'kaos']  # Pants conflict with tops/dresses
+        },
+        'dress': {
+            'keywords': ['dress', 'gaun', 'terusan'],
+            'conflicts_with': ['kemeja', 'celana', 'atasan', 'kaos', 'rok']  # Dresses conflict with separates
+        },
+        'rok': {
+            'keywords': ['rok', 'skirt'],
+            'conflicts_with': ['kemeja', 'dress', 'atasan', 'kaos']  # Skirts conflict with tops/dresses
+        },
+        'jaket': {
+            'keywords': ['jaket', 'jacket', 'blazer', 'coat'],
+            'conflicts_with': []  # Outerwear doesn't conflict (can be worn with anything)
+        },
+        'kaos': {
+            'keywords': ['kaos', 't-shirt', 'tshirt', 'tank'],
+            'conflicts_with': ['celana', 'dress', 'rok']  # T-shirts conflict with bottoms/dresses
+        },
+        'atasan': {
+            'keywords': ['atasan', 'top', 'blouse'],
+            'conflicts_with': ['celana', 'dress', 'rok']  # Tops conflict with bottoms/dresses
+        }
+    }
+    
+    def get_clothing_category(keyword):
+        """Get clothing category for a keyword"""
+        keyword_lower = keyword.lower()
+        for category, terms in clothing_categories.items():
+            if any(term in keyword_lower for term in terms):
+                return category
+        return None
+    
+    def detect_multi_item_request(input_text):
+        """
+        Detect if user is explicitly asking for multiple clothing types.
+        Returns True if it's a multi-item request, False for single-item requests.
+        """
+        input_lower = input_text.lower()
+        
+        # Multi-item indicators
+        multi_indicators = [
+            r'\b(dan|and|atau|or|with|sama|plus|\+|&)\b',  # Connectors
+            r'\b(both|keduanya|semua|all)\b',  # Both/all indicators
+            r'\b(recommendation|rekomendasi).*(dan|and|atau|or)',  # "recommendation for X and Y"
+            r'\b(outfit|set|setelan|lengkap|complete)\b',  # Complete outfit requests
+        ]
+        
+        has_multi_indicator = any(re.search(pattern, input_lower) for pattern in multi_indicators)
+        
+        if has_multi_indicator:
+            print(f"   🤝 MULTI-ITEM REQUEST detected: connectors found")
+            return True
+        
+        # Count distinct clothing categories mentioned
+        mentioned_categories = set()
+        for category, terms in clothing_categories.items():
+            if any(term in input_lower for term in terms):
+                mentioned_categories.add(category)
+        
+        if len(mentioned_categories) > 1:
+            print(f"   🤝 MULTI-ITEM REQUEST detected: {len(mentioned_categories)} clothing types mentioned: {mentioned_categories}")
+            return True
+        
+        print(f"   👕 SINGLE-ITEM REQUEST detected")
+        return False
+    
+    # Extract specific clothing request if possible
+    if translated_input:
+        try:
+            wanted_items, context_items = extract_specific_clothing_request(translated_input, ai_response)
+        except:
+            wanted_items, context_items = [], []
+            for category, terms in clothing_categories.items():
+                for term in terms:
+                    if term in translated_input.lower():
+                        if any(indicator in translated_input.lower() for indicator in ['apa', 'what', 'carikan', 'tunjukkan', 'show']):
+                            wanted_items.append(category)
+                        else:
+                            context_items.append(category)
+    
+    # NEW: Detect if this is a multi-item request
+    is_multi_item_request = False
+    if translated_input:
+        is_multi_item_request = detect_multi_item_request(translated_input)
+    
+    # REVISED: Balanced scoring that prioritizes AI recommendations
+    scoring_categories = {
+        'clothing_items': {
+            'terms': ['kemeja', 'shirt', 'blouse', 'blus', 'dress', 'gaun', 'rok', 'skirt',
+                     'celana', 'pants', 'jeans', 'jacket', 'jaket', 'sweater', 'cardigan',
+                     'atasan', 'top', 'kaos', 't-shirt', 'hoodie', 'blazer', 'coat', 'ankle pants'],
+            'user_score': 300,
+            'ai_score': 400,
+            'priority': 'HIGHEST'
+        },
+        'style_attributes': {
+            'terms': ['lengan panjang', 'lengan pendek', 'long sleeve', 'short sleeve',
+                     'panjang', 'long', 'pendek', 'short', 'slim', 'regular', 'loose', 'ketat',
+                     'longgar', 'tight', 'oversized', 'casual', 'formal', 'elegant'],
+            'user_score': 200,
+            'ai_score': 250,
+            'priority': 'HIGH'
+        },
+        'colors': {
+            'terms': ['white', 'putih', 'black', 'hitam', 'red', 'merah', 'blue', 'biru',
+                     'green', 'hijau', 'yellow', 'kuning', 'brown', 'coklat', 'pink',
+                     'purple', 'ungu', 'orange', 'oranye', 'grey', 'abu-abu', 'navy', 'beige'],
+            'user_score': 200,  # Equal with style attributes
+            'ai_score': 220,
+            'priority': 'HIGH'
+        },
+        'materials_fit': {
+            'terms': ['cotton', 'katun', 'silk', 'sutra', 'denim', 'wool', 'wol', 
+                     'polyester', 'linen', 'leather', 'kulit'],
+            'user_score': 200,
+            'ai_score': 220,
+            'priority': 'HIGH'
+        },
+        'gender_terms': {
+            'terms': ['perempuan', 'wanita', 'female', 'woman', 'pria', 'laki-laki', 'male', 'man'],
+            'user_score': 50,
+            'ai_score': 20,
+            'priority': 'FILTER'
+        },
+        'occasions': {
+            'terms': ['office', 'kantor', 'party', 'pesta', 'wedding', 'pernikahan',
+                     'beach', 'pantai', 'sport', 'olahraga', 'work', 'kerja'],
+            'user_score': 150,
+            'ai_score': 170,
+            'priority': 'MEDIUM'
+        }
+    }
+    
+    def get_keyword_score(keyword, source, frequency=1):
+        """Get appropriate score with BALANCED WEIGHTING"""
+        keyword_lower = keyword.lower()
+        
+        base_score = 0
+        priority = 'DEFAULT'
+        
+        for category, config in scoring_categories.items():
+            if any(term in keyword_lower for term in config['terms']):
+                if source == 'user':
+                    base_score = config['user_score'] * frequency
+                elif source == 'ai':
+                    base_score = config['ai_score'] * frequency
+                else:
+                    base_score = config['user_score'] * frequency * 0.5
+                priority = config['priority']
+                break
+        
+        if base_score == 0:
+            if source == 'user':
+                base_score = 100 * frequency
+            elif source == 'ai':
+                base_score = 120 * frequency
+            else:
+                base_score = 50 * frequency
+            priority = 'DEFAULT'
+        
+        # Moderate specific request boost
+        clothing_category = get_clothing_category(keyword)
+        if clothing_category and clothing_category in wanted_items:
+            if source == 'ai':
+                boost = base_score * 2
+                print(f"      🤖🚀 AI WANTED BOOST: '{keyword}' ({clothing_category}) {base_score} → {base_score + boost}")
+            else:
+                boost = base_score * 1.5
+                print(f"      👤🚀 USER WANTED BOOST: '{keyword}' ({clothing_category}) {base_score} → {base_score + boost}")
+            base_score += boost
+            priority = 'SPECIFIC_REQUEST'
+        
+        return base_score, priority
+    
+    def is_physical_description(text):
+        """Check if text contains physical description"""
+        text_lower = text.lower()
+        
+        physical_indicators = [
+            r'\b(?:kulit|skin)\s+\w+',
+            r'\bberkulit\s+\w+',
+            r'\bwarna\s+kulit',
+            r'\bskin\s+tone',
+            r'\b\d+\s*(?:cm|kg|tahun|years?)',
+            r'\b(?:tinggi|height|berat|weight|umur|age)',
+            r'\b(?:dari|from)\s+(?:indonesia|malaysia|singapore|thailand)',
+            r'\b(?:cowo|cowok|cewe|cewek|pria|wanita|laki-laki|perempuan)',
+            r'\b(?:suka|like)\s+(?:olahraga|sport|gym|fitness)',
+        ]
+        
+        for pattern in physical_indicators:
+            if re.search(pattern, text_lower):
+                return True
+        return False
+    
+    def filter_skin_colors(keyword):
+        """Filter out skin color mentions"""
+        keyword_lower = keyword.lower()
+        
+        skin_color_patterns = [
+            r'\b(?:kulit|skin)\s+([a-zA-Z]+)\b',
+            r'\b([a-zA-Z]+)\s+(?:kulit|skin)\b',
+            r'\bberkulit\s+([a-zA-Z]+)\b',
+            r'\b(?:skin\s+tone|warna\s+kulit)\s+([a-zA-Z]+)\b',
+        ]
+        
+        for pattern in skin_color_patterns:
+            if re.search(pattern, keyword_lower):
+                print(f"      🚫 SKIN COLOR FILTERED: '{keyword}' - not a clothing color")
+                return True
+        
+        if keyword_lower == 'tan' and any(phys in keyword_lower for phys in ['kulit', 'skin']):
+            print(f"      🚫 SKIN COLOR FILTERED: '{keyword}' - tan in skin context")
+            return True
+        
+        return False
+    
+    # Process user input with physical description filtering
+    if translated_input:
+        print(f"📝 USER INPUT: '{translated_input}'")
+        print(f"🤝 Multi-item request: {is_multi_item_request}")
+        
+        # Check for simple response
+        input_words = translated_input.lower().split()
+        is_simple_response = (
+            len(input_words) <= 2 and 
+            all(word in simple_responses for word in input_words)
+        )
+        
+        if is_simple_response:
+            print(f"   ⚠️  SIMPLE RESPONSE DETECTED - Skipping")
+            return []
+        
+        # Physical description filtering with shared clothing categories
+        if is_physical_description(translated_input):
+            print(f"   🚫 PHYSICAL DESCRIPTION DETECTED - Filtering out non-clothing terms")
+            
+            # Get all clothing terms from shared categories
+            shared_categories = get_shared_clothing_categories()
+            all_clothing_terms = []
+            for category_terms in shared_categories.values():
+                all_clothing_terms.extend(category_terms)
+            
+            # Add style attributes to clothing terms
+            style_terms = ['lengan', 'sleeve', 'oversized', 'loose', 'tight', 'pendek', 'panjang', 'slim', 'fitted', 'regular']
+            all_clothing_terms.extend(style_terms)
+            
+            print(f"   👕 Using {len(all_clothing_terms)} clothing terms from shared categories")
+            
+            clothing_terms = []
+            physical_terms = []
+            
+            for word in translated_input.split():
+                # Check against shared clothing categories
+                if any(clothing in word.lower() for clothing in all_clothing_terms):
+                    clothing_terms.append(word)
+                elif any(physical in word.lower() for physical in ['kulit', 'skin', 'cm', 'kg', 'tinggi', 'berat', 'dari', 'indonesia', 'cowo', 'cewe', 'cowok', 'cewek', 'pria', 'wanita', 'tahun', 'umur']):
+                    physical_terms.append(word)
+                else:
+                    clothing_terms.append(word)  # Default to clothing context
+            
+            print(f"   👕 CLOTHING TERMS: {clothing_terms}")
+            print(f"   🚫 PHYSICAL TERMS: {physical_terms}")
+            
+            filtered_input = ' '.join(clothing_terms)
+            doc = nlp(filtered_input) if filtered_input.strip() else nlp("")
+        else:
+            doc = nlp(translated_input)    
+        # Extract keywords using spaCy
+        user_keywords = {}
+        
+        for token in doc:
+            if (token.pos_ in ['NOUN', 'ADJ', 'PROPN'] and 
+                len(token.text) > 2 and 
+                not token.text.isdigit() and
+                token.is_alpha and
+                token.text.lower() not in simple_responses):
+                
+                keyword = token.text.lower()
+                
+                if filter_skin_colors(keyword):
+                    continue
+                
+                user_keywords[keyword] = user_keywords.get(keyword, 0) + 1
+                
+                clothing_cat = get_clothing_category(keyword)
+                if clothing_cat:
+                    current_input_categories.add(clothing_cat)
+        
+        # Score user keywords
+        for keyword, frequency in user_keywords.items():
+            score, priority = get_keyword_score(keyword, 'user', frequency)
+            keyword_scores[keyword] = score
+            
+            print(f"   📌 '{keyword}' (freq: {frequency}) → {score} ({priority})")
+            
+            # Get translation expansion and exclusions
+            try:
+                search_terms = get_search_terms_for_keyword(keyword)
+                if isinstance(search_terms, dict):
+                    include_terms = search_terms.get('include', [])
+                    exclude_terms = search_terms.get('exclude', [])
+                    
+                    for include_term in include_terms:
+                        if include_term != keyword and include_term not in keyword_scores:
+                            expansion_score = score * 0.7
+                            
+                            expansion_clothing_cat = get_clothing_category(include_term)
+                            if expansion_clothing_cat and expansion_clothing_cat in wanted_items:
+                                expansion_score *= 1.5
+                                print(f"      ➕ BOOSTED expansion '{keyword}' → '{include_term}' ({expansion_score:.1f})")
+                            else:
+                                print(f"      ➕ Expanded '{keyword}' → '{include_term}' ({expansion_score:.1f})")
+                            
+                            keyword_scores[include_term] = expansion_score
+                    
+                    if exclude_terms:
+                        global_exclusions.update(exclude_terms)
+                        print(f"      🚫 Will exclude: {exclude_terms}")
+            except Exception as e:
+                print(f"      ⚠️ Translation mapping error: {e}")
+                pass
+    
+    # Process AI response (HIGH PRIORITY)
+    if ai_response:
+        print(f"\n🤖 AI RESPONSE processing (HIGH PRIORITY)...")
+        
+        bold_headings = extract_bold_headings_from_ai_response(ai_response)
+        print(f"   📋 Found {len(bold_headings)} bold headings: {bold_headings}")
+        
+        for heading in bold_headings:
+            heading_lower = heading.lower()
+            cleaned_heading = re.sub(r'[^\w\s-]', '', heading_lower).strip()
+            
+            if cleaned_heading and len(cleaned_heading) > 2:
+                score, priority = get_keyword_score(cleaned_heading, 'ai', 3)
+                
+                if cleaned_heading not in keyword_scores:
+                    keyword_scores[cleaned_heading] = score
+                else:
+                    keyword_scores[cleaned_heading] = max(keyword_scores[cleaned_heading], score)
+                
+                print(f"   🔥 BOLD HEADING: '{cleaned_heading}' → {score} ({priority})")
+                
+                clothing_cat = get_clothing_category(cleaned_heading)
+                if clothing_cat:
+                    current_input_categories.add(clothing_cat)
+                
+                try:
+                    search_terms = get_search_terms_for_keyword(cleaned_heading)
+                    if isinstance(search_terms, dict):
+                        include_terms = search_terms.get('include', [])
+                        exclude_terms = search_terms.get('exclude', [])
+                        
+                        for include_term in include_terms:
+                            if include_term not in keyword_scores:
+                                expansion_score = score * 0.8
+                                
+                                expansion_clothing_cat = get_clothing_category(include_term)
+                                if expansion_clothing_cat and expansion_clothing_cat in wanted_items:
+                                    expansion_score *= 1.5
+                                    print(f"      ➕ BOOSTED AI expansion: '{cleaned_heading}' → '{include_term}' ({expansion_score:.1f})")
+                                else:
+                                    print(f"      ➕ AI expansion: '{cleaned_heading}' → '{include_term}' ({expansion_score:.1f})")
+                                
+                                keyword_scores[include_term] = expansion_score
+                        
+                        if exclude_terms:
+                            global_exclusions.update(exclude_terms)
+                except:
+                    pass
+    
+    # SMART CONFLICT RESOLUTION (RESTORED but improved)
+    print(f"\n⚔️ SMART CONFLICT ANALYSIS:")
+    print(f"   📦 Current input categories: {current_input_categories}")
+    print(f"   🤝 Is multi-item request: {is_multi_item_request}")
+    
+    # Process accumulated keywords with SMART conflict checking
+    accumulated_categories = set()
+    conflicting_keywords = []
+    
+    if accumulated_keywords:
+        print(f"\n📚 ACCUMULATED keywords (with SMART conflict detection)...")
+        
+        # First pass: identify categories and conflicts
+        for keyword, old_weight in accumulated_keywords[:15]:
+            if (keyword and len(keyword) > 2 and 
+                keyword.lower() not in simple_responses and
+                not any(char.isdigit() for char in keyword)):
+                
+                clothing_cat = get_clothing_category(keyword)
+                if clothing_cat:
+                    accumulated_categories.add(clothing_cat)
+                    
+                    # SMART CONFLICT LOGIC: Only apply conflicts for single-item requests
+                    if not is_multi_item_request and current_input_categories:
+                        for current_cat in current_input_categories:
+                            if current_cat in clothing_conflicts:
+                                conflicts_with = clothing_conflicts[current_cat]['conflicts_with']
+                                if clothing_cat in conflicts_with:
+                                    conflicting_keywords.append(keyword)
+                                    print(f"   ⚔️  CONFLICT: '{keyword}' ({clothing_cat}) conflicts with current {current_input_categories}")
+                                    break
+        
+        print(f"   📦 Accumulated categories: {accumulated_categories}")
+        print(f"   🗑️  Conflicting keywords to suppress: {len(conflicting_keywords)}")
+        
+        # Second pass: add non-conflicting keywords with decay
+        for keyword, old_weight in accumulated_keywords[:10]:
+            if (keyword and len(keyword) > 2 and 
+                keyword.lower() not in simple_responses and
+                not any(char.isdigit() for char in keyword) and
+                keyword not in conflicting_keywords):  # SKIP CONFLICTING KEYWORDS (only for single-item requests)
+                
+                if filter_skin_colors(keyword):
+                    continue
+                
+                accumulated_score = old_weight * 0.4
+                
+                if keyword not in keyword_scores and accumulated_score > 15:
+                    keyword_scores[keyword] = accumulated_score
+                    print(f"   📜 '{keyword}' → {accumulated_score:.1f}")
+        
+        # Show what was filtered out
+        if conflicting_keywords:
+            print(f"   ❌ SUPPRESSED conflicting keywords:")
+            for conflicting_kw in conflicting_keywords:
+                print(f"      ❌ '{conflicting_kw}' (conflicts with {current_input_categories})")
+        else:
+            print(f"   ✅ No conflicts detected (multi-item request or no conflicts)")
+    
+    # Clean up unwanted terms
+    excluded_terms = [
+        "rb", "ribu", "rupiah", "budget", "anggaran", "harga", "price",
+        "yang", "dan", "atau", "dengan", "untuk", "dari", "pada", "akan",
+        "dapat", "ada", "adalah", "ini", "itu", "saya", "anda", "kamu",
+        "mereka", "dia", "sangat", "lebih", "kurang", "bagus", "baik",
+        "cocok", "sesuai", "tepat", "bisa", "juga", "hanya", "sudah",
+        "recommendation", "rekomendasi", "suggestion", "saran", "option",
+        "pilihan", "choice", "style", "gaya", "tampilan", "fit",
+        "kulit", "skin", "tubuh", "body", "tinggi", "height", "berat", "weight",
+        "cowo", "cewe", "pria", "wanita", "indonesia", "dari", "cm", "kg"
+    ]
+    
+    cleanup_keywords = []
+    for keyword in list(keyword_scores.keys()):
+        if (keyword in excluded_terms or 
+            len(keyword.split()) > 3 or
+            len(keyword) <= 2):
+            cleanup_keywords.append(keyword)
+    
+    for keyword in cleanup_keywords:
+        del keyword_scores[keyword]
+        print(f"   🗑️ Cleaned: '{keyword}'")
+    
+    # Sort and return
+    ranked_keywords = sorted(keyword_scores.items(), key=lambda x: x[1], reverse=True)
+    
+    print(f"\n🏆 FINAL SMART CONFLICT-AWARE KEYWORDS:")
+    for i, (keyword, score) in enumerate(ranked_keywords[:15]):
+        clothing_cat = get_clothing_category(keyword)
+        
+        if clothing_cat in wanted_items:
+            category_icon = "🎯"
+            priority = "🚀 WANTED"
+        elif clothing_cat in context_items:
+            category_icon = "📝"
+            priority = "📋 CONTEXT"
+        elif score >= 500:
+            category_icon = "⭐"
+            priority = "🔥 AI-HIGH"
+        elif score >= 300:
+            category_icon = "👕"
+            priority = "🎯 HIGH"
+        elif score >= 150:
+            category_icon = "📋"
+            priority = "📋 MED"
+        else:
+            category_icon = "📝"
+            priority = "📝 LOW"
+        
+        clothing_display = f" [{clothing_cat}]" if clothing_cat else ""
+        print(f"   {i+1:2d}. {category_icon} {priority} '{keyword}'{clothing_display} → {score:.1f}")
+    
+    if global_exclusions:
+        print(f"\n🚫 PRODUCT EXCLUSIONS:")
+        for term in sorted(global_exclusions):
+            print(f"   ❌ '{term}'")
+    
+    print(f"\n📊 SMART CONFLICT RESOLUTION SUMMARY:")
+    print(f"   🎯 Wanted items: {wanted_items}")
+    print(f"   📝 Context items: {context_items}")
+    print(f"   🤝 Multi-item request: {is_multi_item_request}")
+    print(f"   ⚔️  Conflicts suppressed: {len(conflicting_keywords) if not is_multi_item_request else 0}")
+    
+    ai_high = len([k for k, s in ranked_keywords if s >= 500])
+    user_high = len([k for k, s in ranked_keywords if 300 <= s < 500])
+    medium = len([k for k, s in ranked_keywords if 150 <= s < 300])
+    
+    print(f"   🤖 AI high priority (500+): {ai_high}")
+    print(f"   👤 User high priority (300-499): {user_high}")
+    print(f"   📋 Medium priority (150-299): {medium}")
+    print(f"   📝 Total keywords: {len(ranked_keywords)}")
+    print("="*60)
+    
+    # Store results
+    extract_ranked_keywords.last_exclusions = list(global_exclusions)
+    extract_ranked_keywords.wanted_items = wanted_items
+    extract_ranked_keywords.context_items = context_items
+    
+    return ranked_keywords[:15]
+
+def get_latest_exclusions():
+    """Get exclusions from the last keyword extraction for product filtering."""
+    return getattr(extract_ranked_keywords, 'last_exclusions', [])
+    
+def post_update_enhanced_cleanup(user_context):
+    """
+    Enhanced cleanup that prioritizes fashion categories over occasions
+    """
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    # Separate keywords by category
+    fashion_keywords = {}
+    occasion_keywords = {}
+    other_keywords = {}
+    
+    fashion_terms = [
+        'kemeja', 'shirt', 'dress', 'celana', 'pants', 'rok', 'jaket',
+        'kaos', 'atasan', 'blouse', 'sweater', 'jeans', 'dasi', 'kerudung',
+        'topi', 'sepatu', 'flat', 'sendal', 'jam', 'jam tangan', 'sabuk', 'tas',
+        'hijab', 'jilbab', 'kerudung', 'tudung', 'gesper', 'belt'
+    ]
+    
+    occasion_terms = [
+        'office', 'kantor', 'party', 'pesta', 'wedding', 'beach', 'sport'
+    ]
+    
+    for keyword, data in user_context["accumulated_keywords"].items():
+        keyword_lower = keyword.lower()
+        
+        if any(term in keyword_lower for term in fashion_terms):
+            fashion_keywords[keyword] = data
+        elif any(term in keyword_lower for term in occasion_terms):
+            occasion_keywords[keyword] = data
+        else:
+            other_keywords[keyword] = data
+    
+    # Keep more fashion keywords, fewer occasion keywords
+    MAX_FASHION = 25
+    MAX_OCCASION = 8  # Limited occasions
+    MAX_OTHER = 12
+    
+    # Sort each category by weight
+    top_fashion = dict(sorted(fashion_keywords.items(), 
+                             key=lambda x: x[1]["weight"], reverse=True)[:MAX_FASHION])
+    
+    top_occasion = dict(sorted(occasion_keywords.items(), 
+                              key=lambda x: x[1]["weight"], reverse=True)[:MAX_OCCASION])
+    
+    top_other = dict(sorted(other_keywords.items(), 
+                           key=lambda x: x[1]["weight"], reverse=True)[:MAX_OTHER])
+    
+    # Combine and update
+    cleaned_keywords = {**top_fashion, **top_occasion, **top_other}
+    
+    removed_count = len(user_context["accumulated_keywords"]) - len(cleaned_keywords)
+    user_context["accumulated_keywords"] = cleaned_keywords
+    
+    if removed_count > 0:
+        print(f"🧹 Enhanced cleanup: Fashion({len(top_fashion)}), Occasion({len(top_occasion)}), Other({len(top_other)})")
+        print(f"   Removed {removed_count} lower-priority keywords")
+
+def is_physical_description(text):
+    """
+    Check if text contains physical description that should not be treated as clothing requirements.
+    """
+    text_lower = text.lower()
+    
+    physical_indicators = [
+        # Skin color contexts
+        r'\b(?:kulit|skin)\s+\w+',
+        r'\bberkulit\s+\w+',
+        r'\bwarna\s+kulit',
+        r'\bskin\s+tone',
+        
+        # Physical measurements
+        r'\b\d+\s*(?:cm|kg|tahun|years?)',
+        r'\b(?:tinggi|height|berat|weight|umur|age)',
+        
+        # Nationality/origin
+        r'\b(?:dari|from)\s+(?:indonesia|malaysia|singapore|thailand)',
+        
+        # Gender
+        r'\b(?:cowo|cowok|cewe|cewek|pria|wanita|laki-laki|perempuan)',
+        
+        # Activities/lifestyle
+        r'\b(?:suka|like)\s+(?:olahraga|sport|gym|fitness)',
+    ]
+    
+    for pattern in physical_indicators:
+        if re.search(pattern, text_lower):
+            return True
+    
+    return False
+
+def detect_rapid_preference_changes(user_input, user_context):
+    """
+    Detect if user is rapidly changing preferences and adjust context accordingly.
+    """
+    rapid_change_patterns = [
+        r'\b(actually|sebenarnya|wait|tunggu)\b',
+        r'\b(no|tidak|bukan)\s+(that|itu)\b',
+        r'\b(change|ganti|ubah)\s+(my mind|pikiran)\b',
+        r'\b(different|lain)\s+(color|warna|style|gaya)\b',
+        r'\b(prefer|lebih suka|mau)\s+(something|sesuatu)\s+(else|lain)\b',
+    ]
     
     user_input_lower = user_input.lower()
     
-    # Budget range patterns
-    budget_patterns = [
-        # Range patterns
-        (r'(?:antara|between)?\s*(\d+)(?:rb|ribu|k)?\s*(?:-|sampai|hingga|to)\s*(\d+)(?:rb|ribu|k)?', "RANGE"),
-        (r'(\d+)\s*(?:-|to|sampai)\s*(\d+)\s*(?:rb|ribu|k|jt|juta)', "RANGE"),
-        
-        # Maximum patterns
-        (r'(?:under|dibawah|maksimal|max|kurang\s+dari|less\s+than)\s*(?:rp\.?\s*)?(\d+)(?:rb|ribu|k|jt|juta)?', "MAX"),
-        (r'(?:below|dibawah)\s*(\d+)(?:rb|ribu|k)', "MAX"),
-        
-        # Minimum patterns
-        (r'(?:above|diatas|over|minimal|min|lebih\s+dari|more\s+than)\s*(?:rp\.?\s*)?(\d+)(?:rb|ribu|k|jt|juta)?', "MIN"),
-        
-        # Exact/Around patterns
-        (r'(?:around|sekitar|budget|anggaran)?\s*(?:rp\.?\s*)?(\d+)(?:rb|ribu|k|jt|juta)', "EXACT"),
-        
-        # Predefined ranges
-        (r'budget.?friendly|murah|cheap', "BUDGET_FRIENDLY"),
-        (r'mid.?range|menengah|affordable', "MID_RANGE"),
-        (r'premium|mahal|expensive|luxury', "PREMIUM"),
-        (r'no.?budget|unlimited|bebas|tidak.?ada.?batas', "NO_LIMIT")
-    ]
+    for pattern in rapid_change_patterns:
+        if re.search(pattern, user_input_lower):
+            print(f"🔄 RAPID CHANGE detected: {pattern}")
+            
+            # Reduce weights of recent keywords more aggressively
+            if "accumulated_keywords" in user_context:
+                for keyword, data in user_context["accumulated_keywords"].items():
+                    if data.get("source") == "user_input":  # Recent user inputs
+                        data["weight"] *= 0.3  # Reduce significantly
+                        print(f"   → Reduced weight of recent keyword: '{keyword}'")
+            
+            return True
     
-    def convert_to_rupiah(amount_str, unit):
-        """Convert amount string with unit to rupiah"""
-        try:
-            amount = int(amount_str)
-            if unit and ('rb' in unit or 'ribu' in unit or 'k' in unit):
-                return amount * 1000
-            elif unit and ('jt' in unit or 'juta' in unit):
-                return amount * 1000000
-            else:
-                # Assume thousands if no unit and amount is reasonable
-                if amount < 1000:
-                    return amount * 1000
-                return amount
-        except:
-            return None
-    
-    # Check patterns
-    for pattern, pattern_type in budget_patterns:
-        matches = list(re.finditer(pattern, user_input_lower))
-        
-        for match in matches:
-            groups = match.groups()
-            match_text = match.group(0)
-            
-            print(f"🔍 Budget pattern matched: '{match_text}' → Type: {pattern_type}")
-            
-            if pattern_type == "RANGE" and len(groups) >= 2 and groups[0] and groups[1]:
-                unit = None
-                if any(x in match_text for x in ['rb', 'ribu', 'k']):
-                    unit = 'rb'
-                elif any(x in match_text for x in ['jt', 'juta']):
-                    unit = 'jt'
-                
-                min_price = convert_to_rupiah(groups[0], unit)
-                max_price = convert_to_rupiah(groups[1], unit)
-                
-                if min_price and max_price:
-                    budget_range = (min(min_price, max_price), max(min_price, max_price))
-                    print(f"💰 Budget range detected: IDR {budget_range[0]:,} - IDR {budget_range[1]:,}")
-                    user_context["budget_range"] = budget_range
-                    return budget_range
-            
-            elif pattern_type in ["MAX", "MIN", "EXACT"] and len(groups) >= 1 and groups[0]:
-                unit = None
-                if any(x in match_text for x in ['rb', 'ribu', 'k']):
-                    unit = 'rb'
-                elif any(x in match_text for x in ['jt', 'juta']):
-                    unit = 'jt'
-                
-                amount = convert_to_rupiah(groups[0], unit)
-                
-                if amount:
-                    if pattern_type == "MAX":
-                        budget_range = (None, amount)
-                        print(f"💰 Budget max detected: Under IDR {amount:,}")
-                    elif pattern_type == "MIN":
-                        budget_range = (amount, None)
-                        print(f"💰 Budget min detected: Above IDR {amount:,}")
-                    elif pattern_type == "EXACT":
-                        # Create range around the amount (±20%)
-                        min_range = int(amount * 0.8)
-                        max_range = int(amount * 1.2)
-                        budget_range = (min_range, max_range)
-                        print(f"💰 Budget exact detected: IDR {min_range:,} - IDR {max_range:,}")
-                    
-                    user_context["budget_range"] = budget_range
-                    return budget_range
-            
-            elif pattern_type == "BUDGET_FRIENDLY":
-                budget_range = (None, 200000)  # Under 200rb
-                print(f"💰 Budget-friendly detected: Under IDR 200,000")
-                user_context["budget_range"] = budget_range
-                return budget_range
-                
-            elif pattern_type == "MID_RANGE":
-                budget_range = (200000, 500000)  # 200rb - 500rb
-                print(f"💰 Mid-range detected: IDR 200,000 - IDR 500,000")
-                user_context["budget_range"] = budget_range
-                return budget_range
-                
-            elif pattern_type == "PREMIUM":
-                budget_range = (500000, None)  # Above 500rb
-                print(f"💰 Premium detected: Above IDR 500,000")
-                user_context["budget_range"] = budget_range
-                return budget_range
-                
-            elif pattern_type == "NO_LIMIT":
-                user_context["budget_range"] = None
-                print(f"💰 No budget limit detected")
-                return "NO_LIMIT"
-    
-    return None
+    return False
+       
+@app.get("/", response_class=HTMLResponse)
+async def chat_page(request: Request):
+    return templates.TemplateResponse("home.html", {"request": request})
 
-class SessionLanguageManager:
-    """
-    ENHANCED: Better session language management
-    """
-    def __init__(self):
-        self.session_languages = {}
-        
-    def detect_or_retrieve_language(self, text, session_id):
-        """
-        ENHANCED: Better language detection and caching
-        """
-        if session_id in self.session_languages:
-            cached_lang = self.session_languages[session_id]
-            print(f"🔄 Using cached language for session {session_id}: '{cached_lang}'")
-            return cached_lang
-        
-        try:
-            if text and text.strip():
-                lang = detect(text)
-                self.session_languages[session_id] = lang
-                print(f"🆕 New language detected for session {session_id}: '{lang}'")
-                return lang
-            print(f"⚠️ Empty text for session {session_id}, defaulting to 'en'")
-            return "en"
-        except Exception as e:
-            print(f"❌ Language detection error for session {session_id}: {e}")
-            return "en"
-            
-    def reset_session(self, session_id):
-        if session_id in self.session_languages:
-            del self.session_languages[session_id]
-            print(f"🗑️ Reset language for session {session_id}")
-
-def detect_language(text):
-    """
-    ENHANCED: Better language detection with fallback handling
-    """
-    try:
-        if not text or not text.strip():
-            raise ValueError("Input text is empty or invalid.")
-        
-        # Use langdetect library
-        detected = detect(text)
-        print(f"🔍 Language detected: '{detected}' for text: '{text[:50]}...'")
-        return detected
-        
-    except Exception as e:
-        print(f"❌ Language detection error: {e}")
-        print(f"   Text: '{text[:100]}...'")
-        return "en"  # Default to English
-
-session_manager = SessionLanguageManager()
-
-def translate_text(text, target_language, session_id=None):
-    try:
-        if session_id and session_id in session_manager.session_languages:
-            source_language = session_manager.session_languages[session_id]
-        else:
-            source_language = detect_language(text)
-            if session_id:
-                session_manager.session_languages[session_id] = source_language
-        
-        if source_language == target_language:
-            return text
-
-        translated_text = MyMemoryTranslator(source=source_language, target=target_language).translate(text)
-        return translated_text
-
-    except Exception as e:
-        print(f"Error during translation: {e}")
-        return text
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def render_markdown(text: str) -> str:
     extensions = [
-        'tables',
-        'nl2br',
-        'fenced_code',
-        'smarty'
+        'tables',  # For table support
+        'nl2br',   # Convert newlines to <br>
+        'fenced_code',  # For code blocks
+        'smarty'   # For smart quotes
     ]
     html_content = markdown(text, extensions=extensions)
     return html_content
@@ -4239,6 +3734,7 @@ cloudinary.config(
 
 def upload_to_cloudinary(file_location):
     try:
+        # Add debugging to verify the file exists and has content
         if not os.path.exists(file_location):
             logging.error(f"File not found at location: {file_location}")
             return None
@@ -4248,6 +3744,9 @@ def upload_to_cloudinary(file_location):
             logging.error(f"File exists but is empty (0 bytes): {file_location}")
             return None
             
+        logging.info(f"Uploading file to Cloudinary: {file_location}, Size: {file_size} bytes")
+        
+        # Optimisation parameters
         transformation = {
             'quality': 'auto',
             'fetch_format': 'auto',
@@ -4258,26 +3757,2687 @@ def upload_to_cloudinary(file_location):
             folder="uploads/",
             transformation=transformation
         )
+        logging.info(f"Cloudinary upload successful: {response['url']}")
         return response['url']
     except Exception as e:
         logging.error(f"Cloudinary upload error: {e}")
-        return None
+        return None  # Return None instead of raising to let the retry logic handle it
+
+@app.post("/upload/")
+async def upload(user_input: str = Form(None), file: UploadFile = None):
+    if not file and not user_input:
+        return JSONResponse(content={"success": False, "error": "No input or file received"})
+
+    try:
+        if file:
+            # Save file with unique name in the upload directory
+            file_extension = file.filename.split(".")[-1].lower()
+            if file_extension not in ALLOWED_EXTENSIONS:
+                raise HTTPException(status_code=400, detail="Invalid file type.")
+
+            # Read file content once
+            file_content = await file.read()
+            file_size = len(file_content)
+            
+            # Log file details for debugging
+            logging.info(f"Received file: {file.filename}, Size: {file_size} bytes")
+            
+            if file_size == 0:
+                logging.error("Uploaded file has 0 bytes")
+                return JSONResponse(content={"success": False, "error": "Uploaded file is empty."})
+                
+            if file_size > 5 * 1024 * 1024:  # 5MB
+                return JSONResponse(content={"success": False, "error": "File size exceeds 5MB limit."})
+            
+            # Ensure upload directory exists
+            if not os.path.exists(UPLOAD_DIR):
+                os.makedirs(UPLOAD_DIR)
+                logging.info(f"Created upload directory: {UPLOAD_DIR}")
+            
+            # Generate unique file name
+            unique_id = uuid.uuid4()
+            sanitized_filename = slugify(file.filename.rsplit(".", 1)[0], lowercase=False)
+            unique_filename = f"{unique_id}_{sanitized_filename}.{file_extension}"
+            file_location = os.path.join(UPLOAD_DIR, unique_filename)
+            
+            # Write the content we already read to the file
+            with open(file_location, "wb") as file_object:
+                file_object.write(file_content)
+            
+            # Verify file was written correctly
+            if os.path.exists(file_location) and os.path.getsize(file_location) > 0:
+                logging.info(f"File successfully saved: {file_location}, Size: {os.path.getsize(file_location)} bytes")
+            else:
+                logging.error(f"File not saved correctly at {file_location}")
+                return JSONResponse(content={"success": False, "error": "Failed to save file."})
+
+            # Upload to Cloudinary with retries
+            image_url = None
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    logging.info(f"Cloudinary upload attempt {attempt+1}/{max_retries}")
+                    image_url = upload_to_cloudinary(file_location)
+                    if image_url:
+                        logging.info(f"Successfully uploaded to Cloudinary: {image_url}")
+                        break
+                    else:
+                        logging.warning(f"Cloudinary upload returned None on attempt {attempt+1}")
+                except Exception as e:
+                    logging.error(f"Cloudinary upload attempt {attempt+1} failed: {str(e)}")
+                    if attempt == max_retries - 1:
+                        logging.error(f"Failed to upload to Cloudinary after {max_retries} attempts: {str(e)}")
+                    else:
+                        logging.info(f"Sleeping for 1 second before retry {attempt+2}")
+                        time.sleep(1)
+
+            if image_url:
+                # File uploaded successfully
+                return JSONResponse(content={"success": True, "file_url": image_url})
+            else:
+                return JSONResponse(content={"success": False, "error": "Failed to upload image to Cloudinary."})
+
+        elif user_input:
+            return JSONResponse(content={"success": True})
+
+        # If neither input nor file is present
+        return JSONResponse(content={"success": False, "error": "No input or file received"})
+
+    except Exception as e:
+        logging.error(f"Error in upload endpoint: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="An error occurred during file upload.")
+    
+chat_responses = []
 
 async def is_small_talk(input_text):
     greetings = ["hello", "hi", "hey", "hi there", "hello there", "good morning", "good afternoon", "good evening", "selamat pagi", "pagi", "selamat siang", "siang", "malam", "selamat malam"]
     return input_text.lower() in greetings or re.match(r"^\s*(hi|hello|hey)\s*$", input_text, re.IGNORECASE)
 
+@app.post("/chat/save")
+async def save_message(message: ChatMessage, db: AsyncSession = Depends(get_db)):
+    try:
+        logging.info(f"Saving message: {message.session_id}, {message.message_type}, {message.content}")
+        new_message = ChatHistoryDB(
+            session_id=message.session_id,
+            message_type=message.message_type,
+            content=message.content
+        )
+        db.add(new_message)
+        await db.commit()
+        return {"success": True}
+    except Exception as e:
+        await db.rollback()
+        logging.error(f"Error saving message: {str(e)}\nTraceback: ")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.get("/chat/history/{session_id}")
+async def get_chat_history(session_id: str, db: AsyncSession = Depends(get_db)):
+    try:
+        query = select(ChatHistoryDB).where(
+            ChatHistoryDB.session_id == session_id
+        ).order_by(ChatHistoryDB.timestamp)
+
+        result = await db.execute(query)
+        messages =  result.scalars().all()
+
+        return ChatHistoryResponse(
+            messages=[
+                ChatMessage (
+                    session_id=msg.session_id,
+                    message_type=msg.message_type,
+                    content=msg.content
+                ) for msg in messages
+            ]
+        )
+            
+    except Exception as e:
+        await db.rollback()
+        logging.error(f"Error getting chat history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async_session = async_sessionmaker(get_db, expire_on_commit=False)
+
+class SessionLanguageManager:
+    def __init__(self):
+        self.session_languages = {}  # Store language by session_id
+        
+    def detect_or_retrieve_language(self, text, session_id):
+        # If this session already has a detected language, use it
+        if session_id in self.session_languages:
+            return self.session_languages[session_id]
+        
+        # Otherwise, detect the language for the first time
+        try:
+            if text and text.strip():
+                lang = detect(text)
+                # Store it for future messages in this session
+                self.session_languages[session_id] = lang
+                return lang
+            return "unknown"
+        except Exception as e:
+            print(f"Language detection error: {e}")
+            return "unknown"
+            
+    def reset_session(self, session_id):
+        # Call this when a conversation ends
+        if session_id in self.session_languages:
+            del self.session_languages[session_id]
+
+# Function to detect the language of the text
+def detect_language(text):
+    try:
+        if not text or not text.strip():
+            raise ValueError("Input text is empty or invalid.")
+        return detect(text)  # Detect the language using langdetect
+    except Exception as e:
+        print(f"Language detection error: {e}")
+        return "unknown"
+
+# Initialize the session manager
+session_manager = SessionLanguageManager()
+
+# Function to translate text using Deep Translator
+def translate_text(text, target_language, session_id=None):
+    try:
+        if session_id and session_id in session_manager.session_languages:
+            source_language = session_manager.session_languages[session_id]
+            print(f"Using stored language for translation: {source_language}")
+        else:
+            source_language = detect_language(text)
+            print(f"Detected language for translation: {source_language}")
+
+            if session_id:
+                session_manager.session_languages[session_id] = source_language
+        
+        print(f"Detected source language: {source_language} ({'from session' if session_id in session_manager.session_languages else 'newly detected'})")
+
+        # If the source and target languages are the same, no translation needed
+        if source_language == target_language:
+            return text
+
+        # Use GoogleTranslator from Deep Translator to perform the translation
+        translated_text = MyMemoryTranslator(source=source_language, target=target_language).translate(text)
+        return translated_text
+
+    except Exception as e:
+        print(f"Error during translation: {e}")
+        return text  # Return the original text as a fallback
+
+def extract_intent(user_input, target_language="en", session_id=None):
+    """Extracts keywords and entities, translating input if necessary."""
+    doc = nlp(user_input)
+
+    try:
+        if session_id:
+            detected_language = session_manager.get_language(session_id, user_input)
+        else:
+            detected_language = detected_language(user_input)
+
+    except:
+        print(f"Language detection error: {str(e)}")
+        detected_language = "en"  # Default to English if detection fails
+    
+    # Translate the input if it's not in the target language
+    if detected_language != target_language:
+        try:
+            user_input = translate_text(user_input, target_language)
+            doc = nlp(user_input)
+        except Exception as e:
+            print(f"Translation error: {str(e)}")
+
+    # Extract keywords and entities
+    keywords = [chunk.text for chunk in doc.noun_chunks]
+    entities = [ent.text for ent in doc.ents]
+
+    recommendation_phrases = [
+        "recommend another product", "show me more option", "suggest something else",
+        "what else do you have", "can you recommend another one", "bisakah kamu menunjukkan produk yang lain",
+        "tunjukkan produk lainnya", "saran produk lainnya", "apa lagi yang kamu punya", "rekomendasikan sesuatu yang lain"
+    ]
+
+    if any(phrase in user_input.lower() for phrase in recommendation_phrases) or \
+       any(keyword in recommendation_phrases for keyword in keywords):
+        intent = "Product Recommendation"
+    else:
+        intent = "General"
+
+    return {
+        "language": detected_language,
+        "translated_text": user_input,
+        "keywords": keywords,
+        "entities": entities, 
+        "intent": intent
+    }
+
+@app.websocket("/ws")
+async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
+    try:
+        await websocket.accept()
+        session_id = str(uuid.uuid4())
+        await websocket.send_text(f"{session_id}|Selamat Datang! Bagaimana saya bisa membantu Anda hari ini?\n\nWelcome! How can I help you today?")
+
+        # Initial system prompt for fashion consultation - only style advice, no products yet
+        message_objects = [{
+            "role": "system",
+            "content": (
+                "You are a fashion consultant. Your task is to provide detailed fashion recommendations "
+                "for users based on their appearance and style preferences. Respond in a friendly, natural tone "
+                "and avoid using structured JSON or code format. Instead, communicate recommendations in conversational sentences.\n\n"
+                
+                "IMPORTANT: Always ask for their gender, weight and height, skin tone, their ethnical background and use this information as a base for your recommendations.\n\n"
+                
+                "IMPORTANT: When asking for style preferences, ALWAYS format them as bullet points with examples:\n\n"
+                
+                "**Style Preferences:**\n"
+                "• **Sleeve length preference:** Please choose from sleeveless (tank tops), short sleeve (t-shirts), 3/4 sleeve (three-quarter), or long sleeve (full coverage)\n"
+                "• **Clothing length preference:** \n"
+                "  - For tops: crop top (above waist), regular length (at waist), tunic (below waist), or longline (hip length)\n"
+                "  - For bottoms: shorts (above knee), capri (mid-calf), regular (ankle length), or long/full length (floor length)\n"
+                "• **Fit preference:** Choose from oversized (loose and baggy), regular fit (standard comfort), fitted (close to body), slim fit (tailored and snug), or loose fit (relaxed but not oversized)\n"
+                "• **Daily activity level and lifestyle:** Please specify sedentary/office work (mostly sitting), moderately active (walking, light exercise), very active/athletic (sports, gym, running), or mixed activities (combination of different activity levels)\n\n"
+                
+                "CRITICAL FORMATTING REQUIREMENTS:\n"
+                "1. Always format each clothing recommendation as a bold heading with size recommendation in parentheses\n"
+                "2. Use this exact format: **[Clothing Item Name] (Disarankan Ukuran [Size])**\n"
+                "3. Follow each heading with a detailed paragraph explanation\n"
+                "4. Always include a horizontal line (---) between different clothing recommendations\n"
+                "5. Each recommendation should be in a separate paragraph block\n\n"
+                
+                "EXAMPLE FORMAT:\n"
+                "**Kemeja Flanel Oversized (Disarankan Ukuran L)**\n"
+                "Kemeja flanel oversized memberikan tampilan santai namun tetap stylish. Cocok dipadukan dengan celana jeans atau celana panjang. Dengan aktivitas yang cukup aktif, ukuran L akan memberikan kenyamanan dan gaya yang Anda inginkan.\n\n"
+                "---\n\n"
+                "**Kemeja Polo Slim Fit (Disarankan Ukuran M)**\n"
+                "Kemeja polo slim fit cocok untuk aktivitas sehari-hari yang lebih formal. Potongan yang pas akan memberikan tampilan yang rapi dan profesional.\n\n"
+                
+                "IMPORTANT: When giving recommendations, mention specific clothing items and how they would suit the user's attributes, "
+                "such as gender, height, weight, skin tone, and consider their daily activities when suggesting appropriate fits and styles.\n\n"
+                
+                "IMPORTANT: Based on the user's measurements, body type, and daily activities, provide a size recommendation (XS, S, M, L, XL, etc.) for each suggested item, explaining why that size would work best for their lifestyle and comfort needs.\n\n"
+                
+                "Give at least 3 items recommendation.\n\n"
+                
+                "IMPORTANT: If the user asks for a specific type of clothing (such as 'kemeja', 'shirt', 'dress', 'pants', etc.), "
+                "make sure your recommendations focus directly on that specific clothing type.\n\n"
+                
+                "MANDATORY FORMATTING RULES:\n"
+                "- Every clothing item must be bold with size recommendation: **[Item Name] (Disarankan Ukuran [Size])**\n"
+                "- Each description must be a separate paragraph explaining why it suits the user\n"
+                "- Use horizontal lines (---) to separate different recommendations\n"
+                "- When asking for style preferences, ALWAYS use bullet points with clear examples\n"
+                "- End with the confirmation question about showing specific products\n\n"
+                
+                "Do not mention any specific brand of clothing.\n"
+                "After each style recommendation, always ask a yes or no question: 'Would you like to see product recommendations based on these style suggestions?' or 'Do these styles align with what you're looking for? I can show you specific products if you're interested.'\n"
+                "DO NOT provide product recommendations in your initial response - only suggest styles and wait for user confirmation."
+            )
+        }]
+        
+        # Store the most recent AI response for use in confirmation handling
+        last_ai_response = ""
+        
+        # Store user context for better recommendations
+        user_context = {
+            "current_image_url": None,
+            "current_text_input": None,
+            "pending_image_analysis": False,
+            "has_shared_image": False,
+            "has_shared_preferences": False,
+            "last_query_type": None,
+            "awaiting_confirmation": False,  # Flag to track if we're waiting for user confirmation
+            "accumulated_keywords": {},  # Dictionary to store and accumulate keywords with their weights
+            "preferences": {},
+            "known_attributes": {},
+            "user_gender": {  # New field to persistently store user gender information
+                "category": None,
+                "term": None, 
+                "confidence": 0,
+                "last_updated": None
+            },
+            "product_cache": {
+                "all_result": pd.DataFrame(),
+                "current_page": 0,
+                "product_per_page": 5,
+                "last_search_params": {},
+                "has_more": False
+            }
+        }
+
+        # Define the GENDER_BOOST constant
+        GENDER_BOOST = 2.0  # High confidence score for direct gender matches
+
+        while True:            
+            try:
+                data = await websocket.receive_text()
+                logging.info(f"Received Websocket data: {data}")
+                
+                if "|" not in data:
+                    await websocket.send_text(f"{session_id}|Invalid message format.")
+                    continue
+                    
+                session_id, user_input = data.split("|", 1)
+                
+                # Save user message to database
+                new_user_message = ChatHistoryDB(
+                    session_id=session_id,
+                    message_type="user",
+                    content=user_input
+                )
+                db.add(new_user_message)
+                await db.commit()
+                
+                # Detect language
+                try:
+                    user_language = session_manager.detect_or_retrieve_language(session_id, user_input)
+                    logging.info(f"User language '{user_language}' for session {session_id}")
+                except Exception as e:
+                    logging.error(f"Language detection error: {str(e)}")
+                    user_language = "en"
+
+                if user_context.get("awaiting_search_adjustment", False):
+                    response_type = detect_search_adjustment_response(user_input)
+                    
+                    print(f"🔍 Search adjustment response: {response_type}")
+                    
+                    # NEW: Check if user is making a new clothing request instead of choosing options
+                    if response_type == "new_clothing_request" or detect_new_clothing_request(user_input):
+                        print(f"🆕 NEW CLOTHING REQUEST detected while in search adjustment mode")
+                        print(f"   📝 New request: '{user_input}'")
+                        
+                        # Clear search adjustment flags and process as new request
+                        user_context["awaiting_search_adjustment"] = False
+                        user_context["awaiting_confirmation"] = False
+                        
+                        # Clear product cache for fresh search
+                        user_context["product_cache"] = {
+                            "all_results": pd.DataFrame(),
+                            "current_page": 0,
+                            "products_per_page": 5,
+                            "has_more": False
+                        }
+                        
+                        # Reset accumulated keywords for completely new search
+                        if "accumulated_keywords" in user_context:
+                            # Keep only essential user attributes (gender, basic preferences)
+                            essential_keywords = {}
+                            for keyword, data in user_context["accumulated_keywords"].items():
+                                if any(essential in keyword.lower() for essential in ['perempuan', 'wanita', 'female', 'woman', 'pria', 'laki-laki', 'male', 'man']):
+                                    essential_keywords[keyword] = {
+                                        "weight": data["weight"] * 0.2,  # Reduce weight significantly
+                                        "count": 1,
+                                        "first_seen": data.get("first_seen", datetime.now().isoformat()),
+                                        "last_seen": datetime.now().isoformat(),
+                                        "source": "preserved_essential"
+                                    }
+                            user_context["accumulated_keywords"] = essential_keywords
+                            print(f"   🧹 Reset accumulated keywords, kept {len(essential_keywords)} essential items")
+                        
+                        # Continue to normal text processing below (don't use 'continue' here)
+                        print(f"   ▶️ Processing as new clothing request...")
+                        
+                    elif response_type == "different_style":
+                        # Handle style clarification (existing code)
+                        style_response = "What style would you prefer instead? For example:"
+                        style_response += "\n- More casual or formal?"
+                        style_response += "\n- Different colors?"
+                        style_response += "\n- Different fit (tight, loose, regular)?"
+                        
+                        if user_language != "en":
+                            style_response = translate_text(style_response, user_language, session_id)
+                        
+                        user_context["awaiting_search_adjustment"] = False
+                        user_context["awaiting_confirmation"] = False
+                        
+                        await websocket.send_text(f"{session_id}|{style_response}")
+                        continue
+                        
+                    elif response_type == "different_type":
+                        # Handle type clarification (existing code)
+                        type_response = "What type of clothing would you like to see instead? For example:"
+                        type_response += "\n- Dresses or skirts?"
+                        type_response += "\n- Pants or jeans?" 
+                        type_response += "\n- T-shirts or sweaters?"
+                        type_response += "\n- Jackets or cardigans?"
+                        
+                        if user_language != "en":
+                            type_response = translate_text(type_response, user_language, session_id)
+                        
+                        user_context["awaiting_search_adjustment"] = False
+                        user_context["awaiting_confirmation"] = False
+                        user_context["product_cache"] = {
+                            "all_results": pd.DataFrame(),
+                            "current_page": 0,
+                            "products_per_page": 5,
+                            "has_more": False
+                        }
+                        
+                        await websocket.send_text(f"{session_id}|{type_response}")
+                        continue
+                        
+                    elif response_type == "general_search":
+                        # Handle general search (existing code)
+                        general_response = "Let me search with more general terms..."
+                        
+                        if user_language != "en":
+                            general_response = translate_text(general_response, user_language, session_id)
+                        
+                        await websocket.send_text(f"{session_id}|{general_response}")
+                        
+                        if "accumulated_keywords" in user_context:
+                            basic_keywords = {}
+                            for keyword, data in user_context["accumulated_keywords"].items():
+                                if any(basic in keyword.lower() for basic in ['kemeja', 'shirt', 'blouse', 'dress', 'celana', 'pants']):
+                                    basic_keywords[keyword] = data
+                            user_context["accumulated_keywords"] = basic_keywords
+                        
+                        user_context["awaiting_search_adjustment"] = False
+                        user_context["awaiting_confirmation"] = True
+                        continue
+                        
+                    else:
+                        # Unknown response - ask for clarification (existing code)
+                        clarification = "I didn't understand your choice. Please specify:"
+                        clarification += "\n1. Different style preferences"
+                        clarification += "\n2. Different clothing types"
+                        clarification += "\n3. More general search"
+                        clarification += "\nOr directly tell me what you're looking for!"
+                        
+                        if user_language != "en":
+                            clarification = translate_text(clarification, user_language, session_id)
+                        
+                        await websocket.send_text(f"{session_id}|{clarification}")
+                        continue
+                # Check if we're awaiting confirmation for product recommendations
+                if user_context["awaiting_confirmation"]:
+                    # Process confirmation response
+                    is_positive = user_input.strip().lower() in ["yes", "ya", "iya", "sure", "tentu", "ok", "okay"]
+                    is_negative = user_input.strip().lower() in ["no", "tidak", "nope", "nah", "tidak usah"]
+                    is_more_request = detect_more_products_request(user_input)
+
+                    print(f"\n📋 CONFIRMATION CHECK START")
+                    print("="*50)
+                    if "accumulated_keywords" in user_context:
+                        acc_kw = user_context["accumulated_keywords"]
+                        print(f"📚 Accumulated Keywords: {len(acc_kw)}")
+                        if acc_kw:
+                            sorted_kw = sorted(acc_kw.items(), key=lambda x: x[1].get("weight", 0), reverse=True)
+                            print(f"   🏆 Top 15:")
+                            for i, (kw, data) in enumerate(sorted_kw[:15]):
+                                source_icon = "👤" if data.get("source") == "user_input" else "🤖"
+                                print(f"      {i+1}. {source_icon} '{kw}' → {data.get('weight', 0):.1f}")
+                    
+                    if "user_gender" in user_context and user_context["user_gender"].get("category"):
+                        gender_info = user_context["user_gender"]
+                        print(f"👤 Gender: {gender_info['category']} (confidence: {gender_info.get('confidence', 0):.1f})")
+                    
+                    if "budget_range" in user_context and user_context["budget_range"]:
+                        budget = user_context["budget_range"]
+                        print(f"💰 Budget: {budget}")
+                    print("="*50)
+
+                    logging.info(f"Confirmation state - Input: '{user_input}' | Positive: {is_positive}, Negative: {is_negative}, More: {is_more_request}")
+                    
+                    if is_positive:
+                        if "budget_range" in user_context:
+                            current_budget = user_context["budget_range"]
+                            print(f"🔍 TEMP DEBUG: Current budget in context: {current_budget}")
+                            if current_budget == (None, None) or not any(current_budget or []):
+                                print(f"🧹 TEMP FIX: Clearing phantom budget")
+                                user_context["budget_range"] = None
+                        # User confirmed, show product recommendations
+                        try:
+                            # Get accumulated keywords from context (without adding new ones)
+                            accumulated_keywords = []
+                            if "accumulated_keywords" in user_context:
+                                # Convert from dictionary to list of tuples format for extract_ranked_keywords
+                                accumulated_keywords = [(k, v["weight"]) for k, v in user_context["accumulated_keywords"].items()]
+                                
+                            # Rank the accumulated keywords based on importance
+                            # Use last AI response and user input for better context
+                            last_user_input = user_context.get("current_text_input", "")
+                            ranked_keywords = extract_ranked_keywords(
+                                last_ai_response,  # Use the last AI response 
+                                last_user_input,   # Use the user's input 
+                                accumulated_keywords
+                            )
+                            
+                            if user_language != "en":
+                                # Extract just the keywords
+                                keywords_only = [kw for kw, _ in ranked_keywords]
+                                
+                                # Join keywords with a special delimiter
+                                combined_text = " ||| ".join(keywords_only)
+                                
+                                # Translate the combined text
+                                translated_combined = translate_text(combined_text, "en", session_id)
+                                
+                                # Split back into individual keywords
+                                translated_keywords = translated_combined.split(" ||| ")
+                                
+                                # Check if we got the right number of translations
+                                if len(translated_keywords) == len(ranked_keywords):
+                                    # Rebuild the tuples with original scores
+                                    translated_ranked_keywords = [(translated_keywords[i], score) for i, (_, score) in enumerate(ranked_keywords)]
+                                else:
+                                    print(f"Translation mismatch: got {len(translated_keywords)} items, expected {len(ranked_keywords)}")
+                                    # Fall back to individual translation
+                                    translated_ranked_keywords = [(translate_text(kw, "en", session_id), score) for kw, score in ranked_keywords]
+                                
+                                translated_ranked_keywords = [(translated_keywords[i], score)
+                                                       for i, (_, score) in enumerate(ranked_keywords)]
+                            else:
+                                translated_ranked_keywords = ranked_keywords
+
+                            logging.info(f"Using ranked keywords for product search: {translated_ranked_keywords[:15]}")
+                            
+                            # Get user gender and budget for filtering
+                            user_gender = user_context.get("user_gender", {}).get("category", None)
+                            budget_range = user_context.get("budget_range", None)
+
+                            print(f"\n💰 CONTEXT BUDGET DEBUG:")
+                            print(f"   📊 user_context keys: {list(user_context.keys())}")
+                            if "budget_range" in user_context:
+                                print(f"   💰 budget_range in context: {user_context['budget_range']}")
+                                print(f"   🔍 budget_range type: {type(user_context['budget_range'])}")
+                            else:
+                                print(f"   ❌ No budget_range in context")
+
+                            if budget_range:
+                                logging.info(f"Using budget filter: {budget_range}")
+                                print(f"Using budget filter: {budget_range}")
+                            
+                            # Positive confirmation message
+                            positive_response = "Great! Based on your preferences and style recommendations, here are some products that might interest you:"
+                            if budget_range:
+                                min_price, max_price = budget_range
+                                if min_price and max_price:
+                                    budget_text = f" (within your budget of IDR {min_price:,} - IDR {max_price:,})"
+                                elif max_price:
+                                    budget_text = f" (under {max_price:,})"
+                                elif min_price:
+                                    budget_text = f" (above {min_price:,})"
+                                else:
+                                    budget_text = ""
+                                positive_response += budget_text
+
+                            if user_language != "en":
+                                positive_response = translate_text(positive_response, user_language, session_id)
+
+                            print(f"\n🔍 PRODUCT SEARCH INPUTS:")
+                            print(f"   🎯 Keywords: {len(translated_ranked_keywords)}")
+                            for i, (kw, score) in enumerate(translated_ranked_keywords[:15]):
+                                print(f"      {i+1}. '{kw}' → {score:.2f}")
+                            print(f"   👤 Gender: {user_gender}")
+                            print(f"   💰 Budget: {budget_range}")
+                            print()
+                            
+                            # Fetch products using the ranked keywords
+                            try:
+                                recommended_products, budget_status = await fetch_products_with_budget_awareness(
+                                    db=db,  # Make sure db is the AsyncSession object
+                                    top_keywords=translated_ranked_keywords,  # Make sure this is a list of tuples
+                                    max_results=15,
+                                    gender_category=user_gender,
+                                    budget_range=budget_range
+                                )
+                                
+                                print(f"Successfully fetched {len(recommended_products)} products")
+
+                                # Handle different budget scenarios
+                                if budget_status == "no_products_in_budget":
+                                    # No products within budget - ask user what to do
+                                    cheapest_price = recommended_products['price'].min() if not recommended_products.empty else None
+                                    most_expensive_price = recommended_products['price'].max() if not recommended_products.empty else None
+                                    
+                                    budget_messages = generate_budget_message(budget_range, user_language, cheapest_price, most_expensive_price)
+                                    budget_response = budget_messages["show_outside_budget"]
+                                    
+                                    # Save the products for potential display and set awaiting budget decision flag
+                                    user_context["pending_products"] = recommended_products
+                                    user_context["awaiting_budget_decision"] = True
+                                    user_context["budget_scenario"] = "show_outside_budget"
+                                    
+                                    # Send budget constraint message
+                                    new_ai_message = ChatHistoryDB(
+                                        session_id=session_id,
+                                        message_type="assistant",
+                                        content=budget_response
+                                    )
+                                    db.add(new_ai_message)
+                                    await db.commit()
+                                    
+                                    await websocket.send_text(f"{session_id}|{budget_response}")
+                                    return  # Exit early, wait for user decision
+                                    
+                                elif budget_status == "no_products_found":
+                                    # NO PRODUCTS FOUND AT ALL - not a budget issue
+                                    no_products_response = "I'm sorry, I couldn't find any products matching your preferences. Would you like to try:"
+                                    no_products_response += "\n1. Different style preferences?"
+                                    no_products_response += "\n2. Different clothing types?"
+                                    no_products_response += "\n3. More general search terms?"
+                                    
+                                    if user_language != "en":
+                                        no_products_response = translate_text(no_products_response, user_language, session_id)
+
+                                    user_context["awaiting_search_adjustment"] = True
+                                    user_context["awaiting_confirmation"] = False
+                                    
+                                    new_ai_message = ChatHistoryDB(
+                                        session_id=session_id,
+                                        message_type="assistant",
+                                        content=no_products_response
+                                    )
+                                    db.add(new_ai_message)
+                                    await db.commit()
+                                    
+                                    await websocket.send_text(f"{session_id}|{no_products_response}")
+                                    user_context["awaiting_confirmation"] = False
+                                    return  # Exit early
+                                
+                            except Exception as fetch_error:
+                                logging.error(f"Error calling fetch_products_from_db: {str(fetch_error)}")
+                                logging.error(f"Parameters passed:")
+                                logging.error(f"- db: {type(db)}")
+                                logging.error(f"- top_keywords: {type(translated_ranked_keywords)} - {translated_ranked_keywords[:3] if translated_ranked_keywords else 'None'}")
+                                logging.error(f"- user_gender: {user_gender}")
+                                logging.error(f"- budget_range: {budget_range}")
+                                raise
+                            
+                            user_context["product_cache"]["all_results"] = recommended_products
+                            user_context["product_cache"]["current_page"] = 0
+                            user_context["product_cache"]["has_more"] = len(recommended_products) > 5
+
+                            first_page_products, has_more = get_paginated_products(
+                                recommended_products,
+                                page=0, 
+                                products_per_page=5
+                            )
+
+                            user_context["product_cache"]["has_more"] = has_more
+
+                            # Create response with product cards
+                            if not first_page_products.empty:
+                                complete_response = positive_response + "\n\n"
+                                
+                                for _, row in first_page_products.iterrows():
+                                    # Create a simpler, more robust product card structure
+                                    product_card = (
+                                        "<div class='product-card'>\n"
+                                        f"<img src='{row['photo']}' alt='{row['product']}' class='product-image'>\n"
+                                        f"<div class='product-info'>\n"  # Separate container for text info
+                                        f"<h3>{row['product']}</h3>\n"
+                                        f"<p class='price'>IDR {row['price']}</p>\n"
+                                        f"<p class='description'>{row['description']}</p>\n"
+                                        f"<p class='available'>Available in size: {row['size']}, Color: {row['color']}</p>\n"
+                                        f"<a href='{row['link']}' target='_blank' class='product-link'>Buy Now</a>\n"
+                                        "</div>\n"  # Close the product-info div
+                                        "</div>\n"  # Close the product-card div
+                                    )
+                                    complete_response += product_card
+                                
+                                if has_more:
+                                    complete_response += "\n\nWould you like to see more options? Just ask for 'more products' or 'lainnya'!"
+                            else:
+                                complete_response = positive_response + "\n\nI'm sorry, but I couldn't find specific product recommendations at the moment. Would you like me to help you with something else?"
+                                budget_msg = ""
+
+                            # For translation, use a more robust method to protect HTML tags
+                            if user_language != "en":
+                                try:
+                                    # Alternative approach to protect HTML: encode entire HTML blocks
+                                    def encode_html_blocks(text):
+                                        # Define a pattern that matches complete HTML elements with content
+                                        pattern = r'(<div class=\'product-card\'>.*?</div>\n)'
+                                        blocks = []
+                                        
+                                        # Replace each block with a placeholder
+                                        def replace_block(match):
+                                            nonlocal blocks
+                                            placeholder = f"__HTML_BLOCK_{len(blocks)}__"
+                                            blocks.append(match.group(0))
+                                            return placeholder
+                                        
+                                        protected_text = re.sub(pattern, replace_block, text, flags=re.DOTALL)
+                                        return protected_text, blocks
+                                    
+                                    # Decode HTML blocks after translation
+                                    def decode_html_blocks(text, blocks):
+                                        for i, block in enumerate(blocks):
+                                            text = text.replace(f"__HTML_BLOCK_{i}__", block)
+                                        return text
+                                    
+                                    # Protect complete HTML blocks
+                                    protected_text, html_blocks = encode_html_blocks(complete_response)
+                                    
+                                    # Translate the protected text
+                                    translated_protected = translate_text(protected_text, user_language, session_id)
+                                    
+                                    # Restore the HTML blocks
+                                    translated_response = decode_html_blocks(translated_protected, html_blocks)
+                                except Exception as e:
+                                    logging.error(f"Error in HTML protection during translation: {str(e)}")
+                                    # Fallback to original method if new method fails
+                                    html_tags = {}
+                                    pattern = r'<[^>]+>'
+                                    
+                                    for i, match in enumerate(re.finditer(pattern, complete_response)):
+                                        placeholder = f"TAG_{i}"
+                                        html_tags[placeholder] = match.group(0)
+                                        complete_response = complete_response.replace(match.group(0), placeholder, 1)
+                                    
+                                    # Translate text
+                                    translated_response = translate_text(complete_response, user_language, session_id)
+                                    
+                                    # Restore HTML tags
+                                    for placeholder, tag in html_tags.items():
+                                        translated_response = translated_response.replace(placeholder, tag)
+                            else:
+                                translated_response = complete_response
+                            
+                            # Save response to database
+                            new_ai_message = ChatHistoryDB(
+                                session_id=session_id,
+                                message_type="assistant",
+                                content=complete_response
+                            )
+                            db.add(new_ai_message)
+                            await db.commit()
+                            
+                            # Send the response
+                            complete_response_html = render_markdown(translated_response)
+                            print(f"{complete_response_html}")
+                            await websocket.send_text(f"{session_id}|{complete_response_html}")
+                            
+                        except Exception as e:
+                            logging.error(f"Error during product recommendation: {str(e)}")
+                            error_msg = "I'm sorry, I couldn't fetch product recommendations. Is there something else you'd like to know about fashion?"
+                            if user_language != "en":
+                                error_msg = translate_text(error_msg, user_language, session_id)
+                            await websocket.send_text(f"{session_id}|{error_msg}")
+                        
+                        # Reset confirmation flag
+                        user_context["awaiting_confirmation"] = True
+
+                    elif is_more_request:
+                        # USER wants MORE products - handle pagination properly
+                        logging.info("🔄 User requesting MORE products")
+                        
+                        # Check if we have cached results for pagination
+                        if not user_context["product_cache"]["all_results"].empty:
+                            current_page = user_context["product_cache"]["current_page"]
+                            next_page = current_page + 1
+                            products_per_page = user_context["product_cache"].get("products_per_page", 5)
+                            
+                            next_page_products, has_more = get_paginated_products(
+                                user_context["product_cache"]["all_results"],
+                                page=next_page,
+                                products_per_page=products_per_page
+                            )
+                            
+                            if not next_page_products.empty:
+                                # Update pagination state
+                                user_context["product_cache"]["current_page"] = next_page
+                                user_context["product_cache"]["has_more"] = has_more
+                                
+                                # Create natural response for more products
+                                more_responses_en = [
+                                    "Here are some more options that might interest you:",
+                                    "I found some additional styles you might like:",
+                                    "Let me show you a few more possibilities:",
+                                    "Here are some other great choices:",
+                                ]
+                                
+                                more_responses_id = [
+                                    "Berikut beberapa pilihan lain yang mungkin menarik:",
+                                    "Saya menemukan beberapa gaya tambahan yang mungkin Anda suka:",
+                                    "Mari saya tunjukkan beberapa kemungkinan lainnya:",
+                                    "Berikut beberapa pilihan bagus lainnya:",
+                                ]
+                                
+                                import random
+                                if user_language != "en":
+                                    positive_response = random.choice(more_responses_id)
+                                else:
+                                    positive_response = random.choice(more_responses_en)
+                                
+                                # Add budget context if available
+                                budget_range = user_context.get("budget_range", None)
+                                if budget_range:
+                                    min_price, max_price = budget_range
+                                    if min_price and max_price:
+                                        budget_text = f" (within your budget of IDR {min_price:,} - IDR {max_price:,})"
+                                    elif max_price:
+                                        budget_text = f" (under IDR {max_price:,})"
+                                    elif min_price:
+                                        budget_text = f" (above IDR {min_price:,})"
+                                    else:
+                                        budget_text = ""
+                                    positive_response += budget_text
+                                
+                                # Generate product cards for NEXT PAGE ONLY
+                                complete_response = positive_response + "\n\n"
+                                
+                                for _, row in next_page_products.iterrows():
+                                    product_card = (
+                                        "<div class='product-card'>\n"
+                                        f"<img src='{row['photo']}' alt='{row['product']}' class='product-image'>\n"
+                                        f"<div class='product-info'>\n"
+                                        f"<h3>{row['product']}</h3>\n"
+                                        f"<p class='price'>IDR {row['price']}</p>\n"
+                                        f"<p class='description'>{row['description']}</p>\n"
+                                        f"<p class='available'>Available in size: {row['size']}, Color: {row['color']}</p>\n"
+                                        f"<a href='{row['link']}' target='_blank' class='product-link'>Buy Now</a>\n"
+                                        "</div>\n"
+                                        "</div>\n"
+                                    )
+                                    complete_response += product_card
+                                
+                                # Add appropriate footer based on whether more products are available
+                                if has_more:
+                                    if user_language != "en":
+                                        more_hint = translate_text("\n\nI have even more options if you'd like to continue exploring! Just let me know if you want to see more.", user_language, session_id)
+                                    else:
+                                        more_hint = "\n\nI have even more options if you'd like to continue exploring! Just let me know if you want to see more."
+                                    complete_response += more_hint
+                                else:
+                                    if user_language != "en":
+                                        end_hint = translate_text("\n\nThat's all the products I found based on your preferences. Is there anything else I can help you with, or would you like to try a different search?", user_language, session_id)
+                                    else:
+                                        end_hint = "\n\nThat's all the products I found based on your preferences. Is there anything else I can help you with, or would you like to try a different search?"
+                                    complete_response += end_hint
+                                
+                                # Handle translation while protecting HTML
+                                if user_language != "en":
+                                    try:
+                                        # Protect HTML blocks during translation
+                                        def encode_html_blocks(text):
+                                            pattern = r'(<div class=\'product-card\'>.*?</div>\n)'
+                                            blocks = []
+                                            
+                                            def replace_block(match):
+                                                nonlocal blocks
+                                                placeholder = f"__HTML_BLOCK_{len(blocks)}__"
+                                                blocks.append(match.group(0))
+                                                return placeholder
+                                            
+                                            protected_text = re.sub(pattern, replace_block, text, flags=re.DOTALL)
+                                            return protected_text, blocks
+                                        
+                                        def decode_html_blocks(text, blocks):
+                                            for i, block in enumerate(blocks):
+                                                text = text.replace(f"__HTML_BLOCK_{i}__", block)
+                                            return text
+                                        
+                                        # Protect and translate
+                                        protected_text, html_blocks = encode_html_blocks(complete_response)
+                                        translated_protected = translate_text(protected_text, user_language, session_id)
+                                        translated_response = decode_html_blocks(translated_protected, html_blocks)
+                                        
+                                    except Exception as e:
+                                        logging.error(f"Error in HTML protection during translation: {str(e)}")
+                                        # Fallback translation method
+                                        html_tags = {}
+                                        pattern = r'<[^>]+>'
+                                        
+                                        for i, match in enumerate(re.finditer(pattern, complete_response)):
+                                            placeholder = f"TAG_{i}"
+                                            html_tags[placeholder] = match.group(0)
+                                            complete_response = complete_response.replace(match.group(0), placeholder, 1)
+                                        
+                                        translated_response = translate_text(complete_response, user_language, session_id)
+                                        
+                                        for placeholder, tag in html_tags.items():
+                                            translated_response = translated_response.replace(placeholder, tag)
+                                else:
+                                    translated_response = complete_response
+                                
+                                # Save response to database
+                                new_ai_message = ChatHistoryDB(
+                                    session_id=session_id,
+                                    message_type="assistant",
+                                    content=complete_response
+                                )
+                                db.add(new_ai_message)
+                                await db.commit()
+                                
+                                # Send the response
+                                complete_response_html = render_markdown(translated_response)
+                                await websocket.send_text(f"{session_id}|{complete_response_html}")
+                                
+                                # Log pagination info
+                                total_products = len(user_context["product_cache"]["all_results"])
+                                products_shown = (next_page + 1) * products_per_page
+                                logging.info(f"📄 Showed page {next_page + 1}, products {current_page * products_per_page + 1}-{min(products_shown, total_products)} of {total_products}")
+                                logging.info(f"📊 Has more pages: {has_more}")
+                                
+                                # Keep awaiting confirmation for potential more requests
+                                user_context["awaiting_confirmation"] = True
+                                
+                            else:
+                                # No more products on next page (edge case)
+                                if user_language != "en":
+                                    no_more_msg = translate_text("I've shown you all the best matches I could find. Would you like to try a different style or adjust your preferences?", user_language, session_id)
+                                else:
+                                    no_more_msg = "I've shown you all the best matches I could find. Would you like to try a different style or adjust your preferences?"
+                                
+                                new_ai_message = ChatHistoryDB(
+                                    session_id=session_id,
+                                    message_type="assistant",
+                                    content=no_more_msg
+                                )
+                                db.add(new_ai_message)
+                                await db.commit()
+                                
+                                await websocket.send_text(f"{session_id}|{no_more_msg}")
+                                logging.info("📭 No more products available on next page")
+                                user_context["awaiting_confirmation"] = False
+                        
+                        else:
+                            # No cached results available - this shouldn't happen if flow is correct
+                            logging.warning("🚨 No cached results available for 'more' request")
+                            
+                            if user_language != "en":
+                                no_cache_msg = translate_text("I don't have any cached product recommendations. Let me search for new recommendations for you. What style are you looking for?", user_language, session_id)
+                            else:
+                                no_cache_msg = "I don't have any cached product recommendations. Let me search for new recommendations for you. What style are you looking for?"
+                            
+                            new_ai_message = ChatHistoryDB(
+                                session_id=session_id,
+                                message_type="assistant",
+                                content=no_cache_msg
+                            )
+                            db.add(new_ai_message)
+                            await db.commit()
+                            
+                            await websocket.send_text(f"{session_id}|{no_cache_msg}")
+                            user_context["awaiting_confirmation"] = False
+
+                    elif user_context.get("awaiting_budget_decision", False):
+                        # User is responding to budget constraint message
+                        budget_response_type = detect_budget_response(user_input)
+                        budget_scenario = user_context.get("budget_scenario", "")
+                        
+                        if budget_response_type == "show_anyway":
+                            # User wants to see products outside budget
+                            pending_products = user_context.get("pending_products", pd.DataFrame())
+                            
+                            if not pending_products.empty:
+                                # Show the products that were outside budget
+                                positive_response = "Great! Here are the product recommendations outside your budget range:"
+                                if user_language != "en":
+                                    positive_response = translate_text(positive_response, user_language, session_id)
+                                
+                                # Use existing product display logic with pending_products
+                                first_page_products, has_more = get_paginated_products(
+                                    pending_products, page=0, products_per_page=5
+                                )
+                                
+                                user_context["product_cache"]["all_results"] = pending_products
+                                user_context["product_cache"]["current_page"] = 0
+                                user_context["product_cache"]["has_more"] = has_more
+                                
+                                # ... continue with existing product card generation ...
+                                
+                            # Clear budget decision flags
+                            user_context["awaiting_budget_decision"] = False
+                            user_context["pending_products"] = pd.DataFrame()
+                            user_context["budget_scenario"] = ""
+                            user_context["awaiting_confirmation"] = True
+                            
+                        elif budget_response_type == "adjust_budget":
+                            # User wants to adjust budget
+                            budget_adjustment, confidence = detect_budget_adjustment_request(user_input)
+                            
+                            if budget_adjustment and confidence > 0.6:
+                                if isinstance(budget_adjustment, tuple) and budget_adjustment[0] in ["increase", "decrease"]:
+                                    # Relative adjustment
+                                    current_budget = user_context.get("budget_range", (None, None))
+                                    action, amount = budget_adjustment
+                                    
+                                    if current_budget[1]:  # Has max budget
+                                        if action == "increase":
+                                            new_max = current_budget[1] + amount
+                                            new_budget = (current_budget[0], new_max)
+                                        else:  # decrease
+                                            new_max = max(current_budget[1] - amount, current_budget[0] if current_budget[0] else 0)
+                                            new_budget = (current_budget[0], new_max)
+                                        
+                                        user_context["budget_range"] = new_budget
+                                        
+                                        adjust_response = f"Budget adjusted to IDR {new_budget[0]:,} - IDR {new_budget[1]:,}. Let me search again with your new budget."
+                                        if user_language != "en":
+                                            adjust_response = translate_text(adjust_response, user_language, session_id)
+                                        
+                                        await websocket.send_text(f"{session_id}|{adjust_response}")
+                                        
+                                        # Trigger new search with adjusted budget
+                                        user_context["awaiting_budget_decision"] = False
+                                        user_context["awaiting_confirmation"] = False  # Trigger new search
+                                    else:
+                                        # Ask for complete budget range
+                                        budget_help = "Please specify your complete budget range, for example: 'budget 100rb-300rb' or 'maximum 250rb'"
+                                        if user_language != "en":
+                                            budget_help = translate_text(budget_help, user_language, session_id)
+                                        await websocket.send_text(f"{session_id}|{budget_help}")
+                                else:
+                                    # Absolute budget
+                                    user_context["budget_range"] = budget_adjustment
+                                    new_min, new_max = budget_adjustment
+                                    
+                                    if new_min and new_max:
+                                        budget_text = f"IDR {new_min:,} - IDR {new_max:,}"
+                                    elif new_max:
+                                        budget_text = f"under IDR {new_max:,}"
+                                    else:
+                                        budget_text = f"above IDR {new_min:,}"
+                                    
+                                    adjust_response = f"Budget updated to {budget_text}. Let me search for products within your new budget."
+                                    if user_language != "en":
+                                        adjust_response = translate_text(adjust_response, user_language, session_id)
+                                    
+                                    await websocket.send_text(f"{session_id}|{adjust_response}")
+                                    
+                                    # Trigger new search
+                                    user_context["awaiting_budget_decision"] = False
+                                    user_context["awaiting_confirmation"] = False
+                            else:
+                                # Ask for clarification
+                                budget_help = "Could you please specify your new budget? For example: 'budget 150rb-400rb' or 'increase budget by 100rb'"
+                                if user_language != "en":
+                                    budget_help = translate_text(budget_help, user_language, session_id)
+                                await websocket.send_text(f"{session_id}|{budget_help}")
+                        
+                        elif budget_response_type == "adjust_search":
+                            # User wants to adjust search criteria instead
+                            budget_messages = generate_budget_message(user_context.get("budget_range"), user_language)
+                            adjust_response = budget_messages["budget_adjustment"]
+                            
+                            user_context["awaiting_budget_decision"] = False
+                            user_context["awaiting_confirmation"] = False  # Allow new search
+                            
+                            new_ai_message = ChatHistoryDB(
+                                session_id=session_id,
+                                message_type="assistant", 
+                                content=adjust_response
+                            )
+                            db.add(new_ai_message)
+                            await db.commit()
+                            
+                            await websocket.send_text(f"{session_id}|{adjust_response}")
+                        
+                        else:
+                            # Unknown response, ask for clarification
+                            clarification = "I didn't quite understand. Would you like to see products outside your budget (yes/no), or would you prefer to adjust your search criteria?"
+                            if user_language != "en":
+                                clarification = translate_text(clarification, user_language, session_id)
+                            await websocket.send_text(f"{session_id}|{clarification}")
+                            
+                    elif is_negative:
+                        # User declined product recommendations
+                        negative_response = "I understand. What specific styles or fashion advice would you prefer instead? I'm here to help you find the perfect look."
+                        if user_language != "en":
+                            negative_response = translate_text(negative_response, user_language, session_id)
+                            
+                        new_ai_message = ChatHistoryDB(
+                            session_id=session_id,
+                            message_type="assistant",
+                            content=negative_response
+                        )
+                        db.add(new_ai_message)
+                        await db.commit()
+                        
+                        await websocket.send_text(f"{session_id}|{negative_response}")
+                        user_context["awaiting_confirmation"] = False
+                    
+                    else:
+                        # Extract keywords from the user's additional input
+                        if user_language != "en":
+                            translated_input = translate_text(user_input, "en", session_id)
+                        else:
+                            translated_input = user_input
+                        
+                        # Save current text input for later use
+                        user_context["current_text_input"] = user_input
+                            
+                        # Extract and update keywords from this additional context
+                        additional_keywords = extract_ranked_keywords("", translated_input)
+                        update_accumulated_keywords(additional_keywords, user_context, is_user_input=True)
+                        
+                        # Continue with regular processing
+                        user_context["awaiting_confirmation"] = False
+                
+                # Check if input contains an image URL
+                url_pattern = re.compile(r'(https?://\S+\.(?:jpg|jpeg|png|gif|bmp|webp))', re.IGNORECASE)
+                image_url_match = url_pattern.search(user_input)
+                
+                if not user_context["awaiting_confirmation"] and image_url_match:
+                    # Process image input (with or without text)
+                    image_url = image_url_match.group(1)
+                    # Extract text content by removing the image URL
+                    text_content = user_input.replace(image_url, "").strip()
+                    
+                    try:
+                        # Update user context for image input
+                        user_context["has_shared_image"] = True
+                        user_context["last_query_type"] = "mixed" if text_content else "image"
+                        user_context["current_image_url"] = image_url
+                        user_context["current_text_input"] = text_content  # Save text content for keyword extraction
+
+                        # Call image analysis
+                        clothing_features = await analyze_uploaded_image(image_url)
+
+                        # Error handling for image analysis
+                        if clothing_features.startswith("Error:"):
+                            error_message = clothing_features
+                            logging.warning(f"Image analysis error: {error_message}")
+
+                            # Save error message to database
+                            new_error_message = ChatHistoryDB(
+                                session_id=session_id,
+                                message_type="assistant",
+                                content=error_message
+                            )
+                            db.add(new_error_message)
+                            await db.commit()
+
+                            # Send error response
+                            await websocket.send_text(f"{session_id}|{error_message}")
+                            continue
+
+                        # Direct gender detection from text content
+                        if text_content:
+                            force_update = detect_gender_change_request(text_content)
+                            detect_and_update_gender(text_content, user_context, force_update)
+
+                        # Prepare prompt based on whether there's additional text or just an image
+                        # Include gender information if available
+                        user_gender_info = get_user_gender(user_context)
+                        gender_context = ""
+                        if user_gender_info["category"]:
+                            gender_context = f" I am {user_gender_info['category']}."
+                            
+                        if text_content:
+                            prompt = f"I've shared an image with the following request: '{text_content}'.{gender_context} Here's what the image shows: {clothing_features}. Please give me style recommendations based on this image and my specific request, but DO NOT offer product recommendations yet."
+                        else:
+                            prompt = f"I've shared an image.{gender_context} Here's what the image shows: {clothing_features}. Please give me style recommendations based on this image, but DO NOT offer product recommendations yet."
+                        
+                        # Generate styling recommendations based on image and text
+                        message_objects.append({
+                            "role": "user",
+                            "content": prompt
+                        })
+
+                        # Get AI style recommendation response
+                        response = openai.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=message_objects,
+                            temperature=0.5
+                        )
+                        
+                        ai_response = response.choices[0].message.content.strip()
+                        last_ai_response = ai_response
+
+                        user_context["last_ai_response"] = ai_response
+                        
+                        message_objects.append({
+                            "role": "assistant",
+                            "content": ai_response
+                        })
+
+                        # Extract and accumulate keywords from image analysis with high weight
+                        image_keywords = extract_ranked_keywords(clothing_features, "")
+                        update_accumulated_keywords(image_keywords, user_context, is_user_input=True)
+                        
+                        # Also process text content keywords if available
+                        if text_content:
+                            text_keywords = extract_ranked_keywords("", text_content)
+                            update_accumulated_keywords(text_keywords, user_context, is_user_input=True)
+                        
+                        # Extract and accumulate keywords from AI style suggestions
+                        style_keywords = extract_ranked_keywords(ai_response, "")
+                        update_accumulated_keywords(style_keywords, user_context, is_ai_response=True)
+                        
+                        # Log the updated keywords and gender information
+                        logging.info(f"Updated accumulated keywords after image analysis: {user_context['accumulated_keywords']}")
+                        logging.info(f"Current user gender info: {user_context['user_gender']}")
+                        print(f"Updated accumulated keywords after image analysis: {user_context['accumulated_keywords']}")
+                        print(f"Current user gender info: {user_context['user_gender']}")
+
+                        # Translate if needed
+                        if user_language != "en":
+                            translated_ai_response = translate_text(ai_response, user_language, session_id)
+                        else:
+                            translated_ai_response = ai_response
+
+                        # Save and send styling recommendations
+                        new_ai_message = ChatHistoryDB(
+                            session_id=session_id,
+                            message_type="assistant",
+                            content=ai_response
+                        )
+                        db.add(new_ai_message)
+                        await db.commit()
+                        
+                        # Send the response
+                        ai_response_html = render_markdown(translated_ai_response)
+                        await websocket.send_text(f"{session_id}|{ai_response_html}")
+                        
+                        # Set awaiting confirmation flag
+                        user_context["awaiting_confirmation"] = True
+
+                    except Exception as input_error:
+                        logging.error(f"Error during image processing: {str(input_error)}\n{traceback.format_exc()}")
+                        error_msg = "Sorry, there was an issue processing your image. Could you try again?"
+                        await websocket.send_text(f"{session_id}|{error_msg}")
+                
+                # Handle normal text input (if no image was processed and not waiting for confirmation)
+                elif not user_context["awaiting_confirmation"]:
+
+                    print(f"\n📋 TEXT PROCESSING START")
+                    print("="*50)
+                    print(f"📝 User input: '{user_input}'")
+                    if "budget_range" in user_context and user_context["budget_range"]:
+                        print(f"💰 Current budget: {user_context['budget_range']}")
+                    print("="*50)
+
+                    # Check for small talk
+                    if await is_small_talk(user_input):
+                        ai_response = "Hello! How can I assist you with fashion recommendations today? Feel free to share information about your style preferences or upload an image for personalized suggestions."
+                        if user_language != "en":
+                            ai_response = translate_text(ai_response, user_language, session_id)
+                            
+                        new_ai_message = ChatHistoryDB(
+                            session_id=session_id,
+                            message_type="assistant",
+                            content=ai_response
+                        )
+                        db.add(new_ai_message)
+                        await db.commit()
+                        
+                        await websocket.send_text(f"{session_id}|{ai_response}")
+                        continue
+                    
+                    # Process text input for style recommendations
+                    user_context["last_query_type"] = "text"
+                    user_context["current_text_input"] = user_input
+
+                    # Translate if needed
+                    if user_language != "en":
+                        translated_input = translate_text(user_input, "en", session_id)
+                    else:
+                        translated_input = user_input
+                    
+                    # Direct gender detection from text
+                    force_update = detect_gender_change_request(user_input)
+                    detect_and_update_gender(translated_input, user_context, force_update)
+                        
+                    # Extract and accumulate keywords from user input with high weight
+                    input_keywords = extract_ranked_keywords("", translated_input)
+                    update_accumulated_keywords(input_keywords, user_context, is_user_input=True)
+                    
+                    # Add to message history - keep it simple
+                    message_objects.append({
+                        "role": "user",
+                        "content": translated_input,
+                    })
+                    
+                    # Get AI response with style recommendations
+                    response = openai.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=message_objects,
+                        temperature=0.5
+                    )
+                    
+                    ai_response = response.choices[0].message.content.strip()
+                    last_ai_response = ai_response
+
+                    user_context["last_ai_response"] = ai_response
+                    
+                    message_objects.append({
+                        "role": "assistant",
+                        "content": ai_response
+                    })
+                    
+                    # Extract and accumulate keywords from AI response
+                    response_keywords = extract_ranked_keywords(ai_response, "")
+                    update_accumulated_keywords(response_keywords, user_context, is_ai_response=True)
+                    
+                    # Log the updated keywords and gender information
+                    logging.info(f"Updated accumulated keywords after text conversation: {user_context['accumulated_keywords']}")
+                    logging.info(f"Current user gender info: {user_context['user_gender']}")
+                    print(f"Updated accumulated keywords after text conversation: {user_context['accumulated_keywords']}")
+                    print(f"Current user gender info: {user_context['user_gender']}")
+                    
+                    # Translate back if needed
+                    if user_language != "en":
+                        translated_response = translate_text(ai_response, user_language, session_id)
+                    else:
+                        translated_response = ai_response
+                    
+                    # Save response
+                    new_ai_message = ChatHistoryDB(
+                        session_id=session_id,
+                        message_type="assistant",
+                        content=ai_response
+                    )
+                    db.add(new_ai_message)
+                    await db.commit()
+                    
+                    # Render and send
+                    ai_response_html = render_markdown(translated_response)
+                    await websocket.send_text(f"{session_id}|{ai_response_html}")
+
+                    # Check for rapid preference changes
+                    detect_rapid_preference_changes(user_input, user_context)
+                    
+                    # Save current text input
+                    user_context["current_text_input"] = user_input
+                    
+                    # SMART KEYWORD EXTRACTION with flexible context
+                    input_keywords = extract_ranked_keywords("", translated_input, 
+                                                                accumulated_keywords=[(k, v["weight"]) for k, v in user_context.get("accumulated_keywords", {}).items()])                                                       
+                    # FLEXIBLE CONTEXT UPDATE
+                    smart_keyword_context_update(user_input, user_context, input_keywords, is_user_input=True)
+                                        
+                    # Set awaiting confirmation flag
+                    user_context["awaiting_confirmation"] = True
+                
+            except WebSocketDisconnect:
+                logging.info(f"Websocket disconnected for session {session_id}")
+                session_manager.reset_session(session_id)
+                break
+                
+            except Exception as e:
+                logging.error(f"Error processing message: {str(e)}\n{traceback.format_exc()}")
+                error_message = "I'm sorry, I encountered an error while processing your request. Please try again."
+                if user_language != "en":
+                    try:
+                        error_message = translate_text(error_message, user_language, session_id)
+                    except:
+                        pass
+                await websocket.send_text(f"{session_id}|{error_message}")
+                
+    except Exception as e:
+        logging.error(f"Websocket error: {str(e)}\n{traceback.format_exc()}")
+        try:
+            await websocket.close()
+        except:
+            pass
+
+
+# Define a comprehensive list of gender terms in multiple languages
+ALL_GENDER_TERMS = [
+    # English
+    "man", "woman", "male", "female", "boy", "girl",
+    # Indonesian
+    "pria", "laki-laki", "perempuan", "wanita", "lelaki", "cewek", "cowok", "cewe", "cowo"
+]
+
+# Gender categories for mapping specific terms to broader gender categories
+GENDER_CATEGORIES = {
+    "male": ["man", "male", "boy", "pria", "laki-laki", "lelaki", "cowok", "cowo"],
+    "female": ["woman", "female", "girl", "perempuan", "wanita", "cewek", "cewe"]
+}
+
+# Create gender term mapping
+GENDER_TERM_MAP = {}
+for gender, terms in GENDER_CATEGORIES.items():
+    for term in terms:
+        GENDER_TERM_MAP[term] = gender
+
+# Function to identify gender from keywords
+def identify_gender_from_keywords(keywords):
+    """
+    Extract gender information from keywords.
+    Returns a tuple of (gender_category, gender_term, confidence_score)
+    """
+    gender_hits = {}
+    best_term = None
+    highest_score = 0
+    
+    for keyword, score in keywords:
+        # Check if the keyword is a gender term
+        keyword_lower = keyword.lower()
+        
+        # Direct match with a gender term
+        if keyword_lower in GENDER_TERM_MAP:
+            gender = GENDER_TERM_MAP[keyword_lower]
+            if gender not in gender_hits:
+                gender_hits[gender] = 0
+            gender_hits[gender] += score
+            
+            if score > highest_score:
+                highest_score = score
+                best_term = keyword_lower
+        
+        # Check if any word in a multi-word keyword is a gender term
+        elif ' ' in keyword_lower:
+            words = keyword_lower.split()
+            for word in words:
+                if word in GENDER_TERM_MAP:
+                    gender = GENDER_TERM_MAP[word]
+                    if gender not in gender_hits:
+                        gender_hits[gender] = 0
+                    gender_hits[gender] += score / len(words)  # Dilute the score for multi-word matches
+                    
+                    if score / len(words) > highest_score:
+                        highest_score = score / len(words)
+                        best_term = word
+    
+    # If we found gender hits, return the highest scoring one
+    if gender_hits:
+        best_gender = max(gender_hits.items(), key=lambda x: x[1])
+        return (best_gender[0], best_term, best_gender[1])
+    
+    return (None, None, 0)
+
+# Add a direct text check for gender inside update_accumulated_keywords
+def detect_gender_directly_from_text(text, current_confidence):
+    """Directly check text for gender terms without keyword extraction"""
+    gender_category = None
+    gender_term = None
+    confidence = 0
+    
+    text_lower = text.lower()
+    
+    # Check each gender term directly
+    for term in ALL_GENDER_TERMS:
+        if term in text_lower:
+            # Find category
+            for category, terms in GENDER_CATEGORIES.items():
+                if term in terms:
+                    # Assign high confidence for direct matches
+                    confidence = 10.0  # GENDER_BOOST value
+                    if confidence > current_confidence:
+                        gender_category = category
+                        gender_term = term
+                        return gender_category, gender_term, confidence
+    
+    return gender_category, gender_term, confidence
+
+def extract_budget_from_text(text):
+    """
+    Extract budget information with smart physical context detection.
+    """
+    if not text:
+        return None
+    
+    print(f"\n💰 BUDGET EXTRACTION DEBUG")
+    print(f"   📝 Input text: '{text}'")
+    
+    text_lower = text.lower()
+    
+    # STEP 1: Identify and exclude physical measurements
+    physical_measurement_patterns = [
+        r'\b(\d+)\s*(?:kg|kilogram|gram|gr)\b',  # Weight: 50kg, 60 kilogram
+        r'\b(\d+)\s*(?:cm|centimeter|meter|m)\b',  # Height: 150cm, 1.7m
+        r'\b(?:tinggi|height)\s*(\d+)(?:\s*cm)?\b',  # Height context: tinggi 150
+        r'\b(?:berat|weight)\s*(\d+)(?:\s*kg)?\b',  # Weight context: berat 50
+        r'\b(?:umur|age)\s*(\d+)(?:\s*tahun|years?)?\b',  # Age: umur 25
+        r'\b(\d+)\s*(?:tahun|years?)\b',  # Age: 25 tahun
+        r'\b(\d+)\s*(?:inch|ft|feet)\b',  # Imperial measurements
+    ]
+    
+    # Extract all physical measurements to exclude them
+    physical_numbers = set()
+    for pattern in physical_measurement_patterns:
+        matches = re.findall(pattern, text_lower)
+        for match in matches:
+            if isinstance(match, tuple):
+                physical_numbers.update(match)
+            else:
+                physical_numbers.add(match)
+    
+    print(f"   🏃 Physical measurements detected: {physical_numbers}")
+    
+    # STEP 2: Check for budget indicators with PRECISE currency detection
+    explicit_budget_keywords = ['budget', 'anggaran', 'harga', 'price', 'biaya', 'cost']
+    constraint_indicators = [
+        'dibawah', 'under', 'maksimal', 'max', 'kurang dari', 'less than',
+        'diatas', 'over', 'minimal', 'min', 'lebih dari', 'more than',
+        'sekitar', 'around', 'kisaran', 'range'
+    ]
+    
+    # FIXED: More precise currency detection using word boundaries
+    currency_patterns = [
+        r'\b(\d+)rb\b',           # 300rb
+        r'\b(\d+)ribu\b',         # 300ribu  
+        r'\b(\d+)k\b',            # 300k (but not 50kg)
+        r'\b(\d+)jt\b',           # 1jt
+        r'\b(\d+)juta\b',         # 1juta
+        r'\brupiah\b',            # rupiah
+        r'\brp\.?\s*\d+\b',       # rp 300000
+        r'\bidr\b'                # idr
+    ]
+    
+    has_explicit_budget = any(keyword in text_lower for keyword in explicit_budget_keywords)
+    has_constraint = any(indicator in text_lower for indicator in constraint_indicators)
+    
+    # Check for currency with precise patterns (avoid kg, cm, etc.)
+    has_currency = False
+    found_currency_matches = []
+    for pattern in currency_patterns:
+        matches = re.findall(pattern, text_lower)
+        if matches:
+            has_currency = True
+            found_currency_matches.extend(matches)
+    
+    print(f"   💰 Explicit budget: {has_explicit_budget}")
+    print(f"   🎯 Constraint indicators: {has_constraint}")
+    print(f"   💵 Currency found: {has_currency} - {found_currency_matches}")
+    
+    # STEP 3: Decision logic with physical exclusion
+    should_process_budget = False
+    
+    if has_explicit_budget:
+        should_process_budget = True
+        print(f"   ✅ Explicit budget keyword found")
+    elif has_constraint and has_currency:
+        should_process_budget = True
+        print(f"   ✅ Budget constraint + currency found")
+    elif has_currency:
+        # Check for standalone currency amounts, but exclude physical measurements
+        currency_number_patterns = [
+            r'\b(\d+)rb\b',
+            r'\b(\d+)ribu\b',
+            r'\b(\d+)k\b',
+            r'\b(\d+)jt\b',
+            r'\b(\d+)juta\b',
+            r'\brp\.?\s*(\d+)\b'
+        ]
+        
+        found_currency_numbers = []
+        for pattern in currency_number_patterns:
+            matches = re.findall(pattern, text_lower)
+            found_currency_numbers.extend(matches)
+        
+        # Only proceed if we found currency numbers that aren't physical measurements
+        valid_currency_numbers = [num for num in found_currency_numbers if num not in physical_numbers]
+        
+        if valid_currency_numbers:
+            should_process_budget = True
+            print(f"   ✅ Valid currency amounts found: {valid_currency_numbers}")
+        else:
+            print(f"   ❌ Currency amounts are physical measurements: {found_currency_numbers}")
+    
+    if not should_process_budget:
+        print(f"   ❌ No valid budget indicators found")
+        return None
+    
+    # STEP 4: Extract budget with physical exclusion
+    def convert_to_rupiah(amount_str, unit):
+        try:
+            amount = int(amount_str)
+            if unit in ['rb', 'ribu', 'k']:
+                return amount * 1000
+            elif unit in ['jt', 'juta']:
+                return amount * 1000000
+            elif unit == '000':
+                return amount * 1000
+            else:
+                return amount
+        except:
+            return None
+    
+    budget_patterns = [
+        # Range patterns
+        (r'(?:budget|anggaran|harga)?\s*(?:antara|between)?\s*(\d+)(?:rb|ribu|k|jt|juta)?\s*(?:-|sampai|hingga|to)\s*(\d+)(?:rb|ribu|k|jt|juta)?', "RANGE"),
+        
+        # Constraint patterns
+        (r'(?:dibawah|under|maksimal|max|kurang\s+dari|less\s+than)\s*(?:rp\.?\s*)?(\d+)(?:rb|ribu|k|jt|juta|000)?', "MAX"),
+        (r'(?:diatas|over|minimal|min|lebih\s+dari|more\s+than)\s*(?:rp\.?\s*)?(\d+)(?:rb|ribu|k|jt|juta|000)?', "MIN"),
+        
+        # Exact/around patterns
+        (r'(?:budget|anggaran|sekitar|around|kisaran)\s*(?:rp\.?\s*)?(\d+)(?:rb|ribu|k|jt|juta|000)?', "EXACT"),
+        
+        # Standalone currency (only if passed validation above)
+        (r'\b(\d+)(?:rb|ribu|k|jt|juta)\b', "STANDALONE"),
+    ]
+    
+    for pattern_idx, (pattern, pattern_type) in enumerate(budget_patterns):
+        matches = list(re.finditer(pattern, text_lower))
+        
+        for match in matches:
+            groups = match.groups()
+            match_text = match.group(0)
+            
+            # CRITICAL: Exclude matches that contain physical measurements
+            matched_numbers = [g for g in groups if g and g.isdigit()]
+            if any(num in physical_numbers for num in matched_numbers):
+                print(f"   ⚠️ Skipping pattern match with physical number: {match_text}")
+                continue
+            
+            # Process valid matches
+            if pattern_type == "RANGE" and len(groups) >= 2 and groups[0] and groups[1]:
+                unit = 'rb' if any(x in match_text for x in ['rb', 'ribu', 'k']) else 'jt' if 'jt' in match_text else None
+                
+                min_price = convert_to_rupiah(groups[0], unit)
+                max_price = convert_to_rupiah(groups[1], unit)
+                
+                if min_price and max_price:
+                    result = (min(min_price, max_price), max(min_price, max_price))
+                    print(f"   🎯 RANGE BUDGET: {result}")
+                    return result
+            
+            elif len(groups) >= 1 and groups[0]:
+                unit = None
+                if any(x in match_text for x in ['rb', 'ribu', 'k']):
+                    unit = 'rb'
+                elif any(x in match_text for x in ['jt', 'juta']):
+                    unit = 'jt'
+                elif '000' in match_text:
+                    unit = '000'
+                
+                amount = convert_to_rupiah(groups[0], unit)
+                
+                if amount:
+                    if pattern_type == "MAX":
+                        result = (None, amount)
+                        print(f"   🎯 MAX BUDGET: {result}")
+                        return result
+                    elif pattern_type == "MIN":
+                        result = (amount, None)
+                        print(f"   🎯 MIN BUDGET: {result}")
+                        return result
+                    elif pattern_type in ["EXACT", "STANDALONE"]:
+                        min_range = int(amount * 0.8)
+                        max_range = int(amount * 1.2)
+                        result = (min_range, max_range)
+                        print(f"   🎯 EXACT BUDGET: {result}")
+                        return result
+    
+    print(f"   ❌ No valid budget patterns after physical exclusion")
+    return None
+    
+def extract_bold_headings_from_ai_response(ai_response):
+    """
+    Extract bold headings from AI response text to use as keywords.
+    These are typically the main clothing items or style recommendations.
+    """
+    if not ai_response:
+        return []
+    
+    bold_headings = []
+    
+    # Pattern 1: **Bold Text** (Markdown bold)
+    markdown_bold_pattern = r'\*\*(.*?)\*\*'
+    markdown_matches = re.findall(markdown_bold_pattern, ai_response)
+    
+    # Pattern 2: **Bold Text** at the beginning of lines (heading style)
+    heading_pattern = r'^\s*\*\*(.*?)\*\*\s*$'
+    heading_matches = re.findall(heading_pattern, ai_response, re.MULTILINE)
+    
+    # Pattern 3: **Bold Text** followed by description (clothing item pattern)
+    clothing_pattern = r'\*\*(.*?)\*\*\s*[–-]\s*'
+    clothing_matches = re.findall(clothing_pattern, ai_response)
+    
+    # Combine all matches
+    all_matches = markdown_matches + heading_matches + clothing_matches
+    
+    # Clean and filter the matches
+    for match in all_matches:
+        cleaned = match.strip()
+        
+        # Skip very short or generic terms
+        if len(cleaned) < 3:
+            continue
+            
+        # Skip generic phrases
+        generic_phrases = [
+            'for you', 'untuk anda', 'recommendation', 'rekomendasi',
+            'style', 'gaya', 'fashion', 'outfit', 'look', 'perfect',
+            'great', 'amazing', 'beautiful', 'cantik', 'bagus'
+        ]
+        
+        if any(generic in cleaned.lower() for generic in generic_phrases):
+            continue
+        
+        # Focus on clothing items and specific style terms
+        clothing_indicators = [
+            'kemeja', 'shirt', 'blouse', 'dress', 'gaun', 'celana', 'pants',
+            'rok', 'skirt', 'jaket', 'jacket', 'sweater', 'cardigan',
+            'kaos', 't-shirt', 'atasan', 'top', 'bawahan', 'bottom',
+            'hoodie', 'blazer', 'coat', 'mantel', 'jeans', 'denim'
+        ]
+        
+        style_indicators = [
+            'casual', 'formal', 'elegant', 'vintage', 'modern', 'minimalist',
+            'bohemian', 'oversized', 'slim', 'cropped', 'long sleeve',
+            'short sleeve', 'off shoulder', 'button up', 'graphic'
+        ]
+        
+        # Check if the heading contains clothing or style terms
+        cleaned_lower = cleaned.lower()
+        is_relevant = (
+            any(indicator in cleaned_lower for indicator in clothing_indicators) or
+            any(indicator in cleaned_lower for indicator in style_indicators) or
+            len(cleaned.split()) <= 4  # Short phrases are likely item names
+        )
+        
+        if is_relevant:
+            bold_headings.append(cleaned)
+    
+    # Remove duplicates while preserving order
+    unique_headings = []
+    seen = set()
+    for heading in bold_headings:
+        if heading.lower() not in seen:
+            unique_headings.append(heading)
+            seen.add(heading.lower())
+    
+    return unique_headings
+
+def update_accumulated_keywords(keywords, user_context, is_user_input=False, is_ai_response=False):
+    """
+    ENHANCED: Better frequency tracking with category-aware persistence.
+    """
+    from datetime import datetime
+    
+    print(f"\n📝 ENHANCED KEYWORD UPDATE")
+    print("="*40)
+    
+    if "accumulated_keywords" not in user_context:
+        user_context["accumulated_keywords"] = {}
+    
+    # Extract budget separately
+    if is_user_input and user_context.get("current_text_input"):
+        text_input = user_context["current_text_input"].lower()
+        
+        # Only extract budget if budget-related context exists
+        budget_context_keywords = [
+            'budget', 'anggaran', 'harga', 'price', 'biaya', 'cost',
+            'maksimal', 'minimal', 'dibawah', 'diatas', 'under', 'over',
+            'sekitar', 'around', 'kisaran', 'range', 'rupiah', 'rp', 'idr'
+        ]
+        
+        has_budget_context = any(keyword in text_input for keyword in budget_context_keywords)
+        
+        if has_budget_context:
+            budget_info = extract_budget_from_text(user_context["current_text_input"])
+            if budget_info:
+                user_context["budget_range"] = budget_info
+                print(f"💰 Budget detected and set: {budget_info}")
+            else:
+                print(f"💰 Budget context found but no valid budget extracted")
+        else:
+            print(f"💰 No budget context in input: '{text_input[:50]}...'")
+        
+        # Validate existing budget for sanity
+        if "budget_range" in user_context and user_context["budget_range"]:
+            budget = user_context["budget_range"]
+            if isinstance(budget, tuple) and len(budget) == 2:
+                min_price, max_price = budget
+                
+                # Clear unreasonably low budgets (likely from physical measurements)
+                if (min_price and min_price < 10000) or (max_price and max_price < 10000):
+                    print(f"💰 CLEARING suspicious budget: {budget} (too low, likely physical measurement)")
+                    user_context["budget_range"] = None
+
+    # Category-based persistence settings
+    persistence_config = {
+        'clothing_items': {'decay_rate': 0.1, 'max_age_minutes': 120},  # Long persistence
+        'style_attributes': {'decay_rate': 0.15, 'max_age_minutes': 90},
+        'colors': {'decay_rate': 0.2, 'max_age_minutes': 60},
+        'gender_terms': {'decay_rate': 0.05, 'max_age_minutes': 240},  # Very long persistence but low weight
+        'occasions': {'decay_rate': 0.4, 'max_age_minutes': 30},       # Short persistence
+        'default': {'decay_rate': 0.25, 'max_age_minutes': 45}
+    }
+    
+    def get_keyword_category(keyword):
+        """Determine keyword category for persistence settings"""
+        keyword_lower = keyword.lower()
+        
+        categories = {
+            'clothing_items': ['kemeja', 'shirt', 'blouse', 'dress', 'gaun', 'celana', 'pants', 'jacket'],
+            'style_attributes': ['casual', 'formal', 'elegant', 'panjang', 'pendek', 'slim', 'oversized'],
+            'colors': ['white', 'black', 'red', 'blue', 'putih', 'hitam', 'merah', 'biru'],
+            'gender_terms': ['perempuan', 'wanita', 'female', 'woman', 'pria', 'laki-laki', 'male', 'man'],
+            'occasions': ['office', 'kantor', 'party', 'pesta', 'wedding', 'beach']
+        }
+        
+        for category, terms in categories.items():
+            if any(term in keyword_lower for term in terms):
+                return category
+        
+        return 'default'
+    
+    updates_made = 0
+    new_keywords_added = 0
+    
+    for keyword, score in keywords:
+        if not keyword or len(keyword) < 2:
+            continue
+        
+        keyword_lower = keyword.lower()
+        category = get_keyword_category(keyword)
+        
+        # Convert score to frequency estimate
+        if is_user_input:
+            frequency_boost = 2.0
+            estimated_frequency = max(1, score / 100)  # User scores are higher
+        else:
+            frequency_boost = 1.0
+            estimated_frequency = max(1, score / 50)   # AI scores are lower
+        
+        if keyword_lower in user_context["accumulated_keywords"]:
+            # Update existing keyword
+            data = user_context["accumulated_keywords"][keyword_lower]
+            
+            old_frequency = data.get("total_frequency", 1)
+            new_frequency = old_frequency + (estimated_frequency * frequency_boost)
+            
+            # Category-aware weight calculation
+            config = persistence_config.get(category, persistence_config['default'])
+            base_weight = new_frequency * 30
+            
+            # Apply category multiplier
+            if category == 'gender_terms':
+                base_weight *= 0.5  # Reduce gender weight
+            elif category == 'clothing_items':
+                base_weight *= 1.5  # Boost clothing items
+            elif category == 'occasions':
+                base_weight *= 0.7  # Reduce occasion weight
+            
+            data["weight"] = base_weight
+            data["total_frequency"] = new_frequency
+            data["category"] = category
+            data["mention_count"] = data.get("mention_count", 0) + 1
+            data["last_seen"] = datetime.now().isoformat()
+            
+            updates_made += 1
+            print(f"   📈 '{keyword}' ({category}) freq: {old_frequency:.1f} → {new_frequency:.1f}")
+            
+        else:
+            # Add new keyword
+            config = persistence_config.get(category, persistence_config['default'])
+            initial_frequency = estimated_frequency * frequency_boost
+            base_weight = initial_frequency * 30
+            
+            # Apply category multiplier for new keywords too
+            if category == 'gender_terms':
+                base_weight *= 0.5
+            elif category == 'clothing_items':
+                base_weight *= 1.5
+            elif category == 'occasions':
+                base_weight *= 0.7
+            
+            user_context["accumulated_keywords"][keyword_lower] = {
+                "weight": base_weight,
+                "total_frequency": initial_frequency,
+                "category": category,
+                "mention_count": 1,
+                "first_seen": datetime.now().isoformat(),
+                "last_seen": datetime.now().isoformat(),
+                "source": "user_input" if is_user_input else "ai_response"
+            }
+            new_keywords_added += 1
+            print(f"   🆕 '{keyword}' ({category}) initial freq: {initial_frequency:.1f}")
+    
+    # Enhanced cleanup with category awareness
+    category_cleanup(user_context, persistence_config)
+    
+    print(f"📊 Updates: {updates_made}, New: {new_keywords_added}")
+    print(f"📚 Total: {len(user_context['accumulated_keywords'])}")
+    print("="*40)
+
+def category_cleanup(user_context, persistence_config):
+    """
+    Enhanced cleanup that respects category-based persistence rules while preserving 
+    keywords needed for fashion category change detection.
+    """
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    from datetime import datetime, timedelta
+    current_time = datetime.now()
+    
+    # Define fashion categories for change detection compatibility
+    fashion_change_categories = {
+        'tops': ['kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 'sweater', 'hoodie'],
+        'bottoms': ['celana', 'pants', 'rok', 'skirt', 'jeans'],
+        'dresses': ['dress', 'gaun', 'terusan'],
+        'outerwear': ['jaket', 'jacket', 'blazer', 'coat', 'mantel'],
+        'shoes': ['sepatu', 'shoes', 'heels', 'sneaker', 'boots'],
+        'bags': ['tas', 'bag', 'handbag', 'backpack'],
+        'occasions': ['office', 'kantor', 'party', 'pesta', 'wedding', 'pernikahan', 'beach', 'pantai', 'sport', 'olahraga'],
+        'styles': ['casual', 'formal', 'elegant', 'vintage', 'modern', 'minimalist', 'bohemian']
+    }
+    
+    def is_change_detection_keyword(keyword):
+        """Check if keyword is important for fashion category change detection"""
+        keyword_lower = keyword.lower()
+        for category, terms in fashion_change_categories.items():
+            if any(term in keyword_lower for term in terms):
+                return True, category
+        return False, None
+    
+    keywords_to_remove = []
+    change_detection_keywords = {}  # Track keywords important for change detection
+    
+    for keyword, data in user_context["accumulated_keywords"].items():
+        category = data.get("category", "default")
+        config = persistence_config.get(category, persistence_config["default"])
+        
+        # Check if this keyword is important for change detection
+        is_change_keyword, change_category = is_change_detection_keyword(keyword)
+        
+        # Check age
+        try:
+            last_seen = datetime.fromisoformat(data.get("last_seen", data.get("first_seen", "")))
+            minutes_since_last_seen = (current_time - last_seen).total_seconds() / 60
+        except:
+            minutes_since_last_seen = 999  # Remove if can't parse
+        
+        # PRESERVE keywords important for change detection with extended lifetime
+        if is_change_keyword:
+            # Extended max age for change detection keywords
+            extended_max_age = config["max_age_minutes"] * 2  # Double the lifetime
+            
+            if minutes_since_last_seen > extended_max_age:
+                # Only remove if VERY old
+                keywords_to_remove.append(keyword)
+                continue
+            else:
+                # Track this as a change detection keyword
+                change_detection_keywords[keyword] = {
+                    'data': data,
+                    'change_category': change_category,
+                    'minutes_old': minutes_since_last_seen
+                }
+                print(f"   🔄 PRESERVED for change detection: '{keyword}' ({change_category}, {minutes_since_last_seen:.1f}min old)")
+        else:
+            # Apply normal aging rules for non-change-detection keywords
+            if minutes_since_last_seen > config["max_age_minutes"]:
+                keywords_to_remove.append(keyword)
+                continue
+        
+        # Apply time-based decay (more gentle for change detection keywords)
+        if minutes_since_last_seen > 10:
+            if is_change_keyword:
+                # Gentler decay for change detection keywords
+                decay_factor = max(0.6, 1 - (minutes_since_last_seen / (config["max_age_minutes"] * 2)))
+            else:
+                # Normal decay for regular keywords
+                decay_factor = max(0.3, 1 - (minutes_since_last_seen / config["max_age_minutes"]))
+            
+            data["total_frequency"] *= decay_factor
+            data["weight"] = data["total_frequency"] * 30
+            
+            # Apply category weight adjustment after decay
+            if category == 'gender_terms':
+                data["weight"] *= 0.5
+            elif category == 'clothing_items':
+                data["weight"] *= 1.5
+            elif category == 'occasions':
+                data["weight"] *= 0.7
+        
+        # More lenient weight threshold for change detection keywords
+        min_weight_threshold = 2 if is_change_keyword else 5
+        if data["weight"] < min_weight_threshold:
+            if not is_change_keyword:  # Don't remove change detection keywords based on weight alone
+                keywords_to_remove.append(keyword)
+    
+    # Remove aged-out keywords (excluding change detection keywords)
+    actual_removals = []
+    for keyword in keywords_to_remove:
+        if keyword not in change_detection_keywords:  # Double-check
+            category = user_context["accumulated_keywords"][keyword].get("category", "unknown")
+            del user_context["accumulated_keywords"][keyword]
+            actual_removals.append(keyword)
+    
+    if actual_removals:
+        print(f"🧹 Removed {len(actual_removals)} aged-out keywords (preserved {len(change_detection_keywords)} for change detection)")
+    
+    # Enhanced category limits that preserve change detection diversity
+    category_limits = {
+        'clothing_items': 15,  # Keep more clothing items
+        'style_attributes': 10,
+        'colors': 8,
+        'gender_terms': 2,     # Keep only a few gender terms
+        'occasions': 5,        # Limit occasions
+        'default': 8
+    }
+    
+    # Group by category
+    by_category = {}
+    for keyword, data in user_context["accumulated_keywords"].items():
+        category = data.get("category", "default")
+        if category not in by_category:
+            by_category[category] = []
+        by_category[category].append((keyword, data))
+    
+    # Limit each category while ensuring change detection keyword diversity
+    final_keywords = {}
+    
+    # First, ensure we keep at least one keyword from each fashion change category
+    change_category_representation = {}
+    for keyword, change_info in change_detection_keywords.items():
+        change_cat = change_info['change_category']
+        if change_cat not in change_category_representation:
+            change_category_representation[change_cat] = []
+        change_category_representation[change_cat].append((keyword, change_info['data']))
+    
+    # Ensure representation from each change category (keep top keyword from each)
+    guaranteed_keywords = set()
+    for change_cat, keywords_in_cat in change_category_representation.items():
+        if keywords_in_cat:
+            # Keep the highest weight keyword from each change category
+            top_keyword, top_data = max(keywords_in_cat, key=lambda x: x[1]["weight"])
+            final_keywords[top_keyword] = top_data
+            guaranteed_keywords.add(top_keyword)
+            print(f"   🔒 GUARANTEED for '{change_cat}': '{top_keyword}' (weight: {top_data['weight']:.1f})")
+    
+    # Now apply normal category limits for remaining keywords
+    for category, items in by_category.items():
+        limit = category_limits.get(category, 8)
+        sorted_items = sorted(items, key=lambda x: x[1]["weight"], reverse=True)
+        
+        added_from_category = 0
+        for keyword, data in sorted_items:
+            # Skip if already guaranteed
+            if keyword in guaranteed_keywords:
+                added_from_category += 1
+                continue
+                
+            # Add up to limit
+            if added_from_category < limit:
+                final_keywords[keyword] = data
+                added_from_category += 1
+    
+    removed_count = len(user_context["accumulated_keywords"]) - len(final_keywords)
+    user_context["accumulated_keywords"] = final_keywords
+    
+    if removed_count > 0:
+        print(f"📉 Category limits applied: removed {removed_count} keywords")
+        print(f"🔄 Change detection diversity: {len(change_category_representation)} categories represented")
+
+def frequency_cleanup(user_context):
+    """
+    Clean up keywords based on frequency and usage patterns.
+    """
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    from datetime import datetime, timedelta
+    current_time = datetime.now()
+    
+    keywords_to_remove = []
+    
+    for keyword, data in user_context["accumulated_keywords"].items():
+        # Remove low-frequency keywords that haven't been mentioned recently
+        total_freq = data.get("total_frequency", 0)
+        mention_count = data.get("mention_count", 0)
+        
+        # Check last seen time
+        try:
+            last_seen = datetime.fromisoformat(data.get("last_seen", data.get("first_seen", "")))
+            minutes_since_last_seen = (current_time - last_seen).total_seconds() / 60
+        except:
+            minutes_since_last_seen = 60  # Default to old if can't parse
+        
+        # Remove criteria based on frequency and recency
+        should_remove = False
+        
+        # Remove very low frequency keywords that are old
+        if total_freq < 2 and minutes_since_last_seen > 30:
+            should_remove = True
+            
+        # Remove keywords mentioned only once and are old
+        elif mention_count <= 1 and minutes_since_last_seen > 45:
+            should_remove = True
+            
+        # Remove excluded terms that might have slipped through
+        elif any(excluded in keyword for excluded in ['rb', 'ribu', 'jt', 'budget', 'kulit', 'skin']):
+            should_remove = True
+            
+        # Remove compound phrases
+        elif len(keyword.split()) > 2:
+            should_remove = True
+        
+        if should_remove:
+            keywords_to_remove.append(keyword)
+    
+    # Apply natural decay to remaining keywords over time
+    for keyword, data in user_context["accumulated_keywords"].items():
+        if keyword not in keywords_to_remove:
+            try:
+                last_seen = datetime.fromisoformat(data.get("last_seen", data.get("first_seen", "")))
+                minutes_since_last_seen = (current_time - last_seen).total_seconds() / 60
+                
+                # Apply gentle decay over time
+                if minutes_since_last_seen > 10:
+                    decay_factor = max(0.5, 1 - (minutes_since_last_seen - 10) / 120)  # Decay over 2 hours
+                    data["total_frequency"] *= decay_factor
+                    data["weight"] = data["total_frequency"] * 30
+            except:
+                pass
+    
+    # Remove identified keywords
+    for keyword in keywords_to_remove:
+        del user_context["accumulated_keywords"][keyword]
+    
+    # Keep only top 25 most frequent keywords
+    if len(user_context["accumulated_keywords"]) > 25:
+        sorted_keywords = sorted(
+            user_context["accumulated_keywords"].items(),
+            key=lambda x: x[1].get("total_frequency", 0),
+            reverse=True
+        )
+        user_context["accumulated_keywords"] = dict(sorted_keywords[:25])
+    
+    if keywords_to_remove:
+        print(f"🧹 Removed {len(keywords_to_remove)} low-frequency/old keywords")
+
+def clean_accumulated_keywords(user_context):
+    """
+    Clean up accumulated keywords to prevent bloat and maintain quality.
+    """
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    keywords_to_remove = []
+    
+    # Remove problematic keywords
+    for keyword, data in user_context["accumulated_keywords"].items():
+        # Remove budget-related terms
+        if any(budget in keyword for budget in ['rb', 'ribu', 'jt', 'juta', '000', 'budget', 'anggaran']):
+            keywords_to_remove.append(keyword)
+        # Remove compound phrases that are too specific
+        elif len(keyword.split()) > 2:
+            keywords_to_remove.append(keyword)
+        # Remove very low weight keywords
+        elif data["weight"] < 5:
+            keywords_to_remove.append(keyword)
+    
+    # Remove identified keywords
+    for keyword in keywords_to_remove:
+        del user_context["accumulated_keywords"][keyword]
+    
+    # Keep only top 20 keywords by weight
+    if len(user_context["accumulated_keywords"]) > 20:
+        sorted_keywords = sorted(
+            user_context["accumulated_keywords"].items(),
+            key=lambda x: x[1]["weight"],
+            reverse=True
+        )
+        user_context["accumulated_keywords"] = dict(sorted_keywords[:20])
+    
+    if keywords_to_remove:
+        print(f"🧹 Cleaned {len(keywords_to_remove)} problematic keywords")
+
+def get_keyword_category_multiplier(keyword):
+    """Return multiplier based on keyword category to prioritize fashion over occasions"""
+    keyword_lower = keyword.lower()
+    
+    # HIGHEST PRIORITY - Core clothing items
+    clothing_items = [
+        "kemeja", "shirt", "blouse", "blus", "dress", "gaun", "celana", "pants", 
+        "rok", "skirt", "jeans", "jaket", "jacket", "sweater", "cardigan", 
+        "hoodie", "blazer", "coat", "mantel", "atasan", "kaos", "t-shirt"
+    ]
+    
+    # HIGH PRIORITY - Style attributes  
+    style_attributes = [
+        "casual", "formal", "elegant", "vintage", "modern", "minimalist",
+        "bohemian", "oversized", "slim", "ketat", "longgar"
+    ]
+    
+    # MEDIUM PRIORITY - Colors and materials
+    colors_materials = [
+        "white", "black", "red", "blue", "green", "putih", "hitam", "merah",
+        "cotton", "silk", "denim", "katun", "sutra"
+    ]
+    
+    # LOW PRIORITY - Occasions (this is the fix!)
+    occasions = [
+        "office", "kantor", "party", "pesta", "wedding", "pernikahan", 
+        "beach", "pantai", "sport", "olahraga", "work", "kerja"
+    ]
+    
+    # Check category and return appropriate multiplier
+    if any(item in keyword_lower for item in clothing_items):
+        return 4.0  # HIGHEST priority for clothing
+    elif any(style in keyword_lower for style in style_attributes):
+        return 3.0  # HIGH priority for styles
+    elif any(color in keyword_lower for color in colors_materials):
+        return 2.0  # MEDIUM priority for colors/materials
+    elif any(occasion in keyword_lower for occasion in occasions):
+        return 0.5  # LOW priority for occasions (KEY FIX!)
+    else:
+        return 1.0  # Default
+
+def detect_fashion_category_change(user_input, user_context):
+    """
+    Enhanced fashion category change detection that works with the cleanup system.
+    Returns True if user is asking for a different fashion item category.
+    """
+    user_input_lower = user_input.lower()
+    
+    # Fashion categories (same as in cleanup function for consistency)
+    fashion_categories = {
+        'tops': ['kemeja', 'shirt', 'blouse', 'blus', 'atasan', 'kaos', 't-shirt', 'sweater', 'hoodie'],
+        'bottoms': ['celana', 'pants', 'rok', 'skirt', 'jeans'],
+        'dresses': ['dress', 'gaun', 'terusan'],
+        'outerwear': ['jaket', 'jacket', 'blazer', 'coat', 'mantel'],
+        'shoes': ['sepatu', 'shoes', 'heels', 'sneaker', 'boots'],
+        'bags': ['tas', 'bag', 'handbag', 'backpack'],
+        'occasions': ['office', 'kantor', 'party', 'pesta', 'wedding', 'pernikahan', 'beach', 'pantai', 'sport', 'olahraga'],
+        'styles': ['casual', 'formal', 'elegant', 'vintage', 'modern', 'minimalist', 'bohemian']
+    }
+    
+    # Find current category in user input
+    current_category = None
+    current_terms = []
+    for category, terms in fashion_categories.items():
+        found_terms = [term for term in terms if term in user_input_lower]
+        if found_terms:
+            current_category = category
+            current_terms = found_terms
+            break
+    
+    # Find previous category in accumulated keywords (use actual accumulated keywords)
+    previous_categories = set()
+    accumulated_keywords = user_context.get("accumulated_keywords", {})
+    
+    for keyword, data in accumulated_keywords.items():
+        keyword_lower = keyword.lower()
+        for category, terms in fashion_categories.items():
+            if any(term in keyword_lower for term in terms):
+                previous_categories.add(category)
+                break
+    
+    print(f"🔍 CHANGE DETECTION:")
+    print(f"   📝 Current input category: {current_category} (terms: {current_terms})")
+    print(f"   📚 Previous categories in context: {previous_categories}")
+    
+    # Special handling for occasion changes (less disruptive)
+    if current_category == 'occasions' and any(cat in ['tops', 'bottoms', 'dresses', 'outerwear'] for cat in previous_categories):
+        print(f"🎪 OCCASION CHANGE: {previous_categories} → {current_category} (minor reset)")
+        return False  # Don't reset everything for occasion changes
+    
+    # Check if categories are different (major changes only)
+    if current_category and previous_categories and current_category not in previous_categories:
+        # Don't reset for style-only changes
+        if current_category == 'styles' or 'styles' in previous_categories:
+            print(f"🎨 STYLE CHANGE: {previous_categories} → {current_category} (keeping keywords)")
+            return False
+            
+        # Check for explicit change indicators
+        change_indicators = [
+            'instead', 'not that', 'forget about', 'different', 'rather',
+            'ganti', 'bukan itu', 'lupakan', 'berbeda', 'lebih suka',
+            'now show', 'sekarang', 'now i want', 'i want different'
+        ]
+        
+        has_explicit_change = any(indicator in user_input_lower for indicator in change_indicators)
+        
+        if has_explicit_change or len(previous_categories) == 1:
+            print(f"🔄 MAJOR CATEGORY CHANGE: {previous_categories} → {current_category}")
+            return True
+        else:
+            print(f"🤔 POSSIBLE CATEGORY ADDITION: {previous_categories} + {current_category} (not resetting)")
+            return False
+    
+    return False
+
+def detect_occasion_change(user_input, accumulated_keywords):
+    """
+    Separate function to detect occasion-specific changes
+    """
+    user_input_lower = user_input.lower()
+    
+    occasion_terms = [
+        'office', 'kantor', 'party', 'pesta', 'wedding', 'pernikahan', 
+        'beach', 'pantai', 'sport', 'olahraga', 'work', 'kerja',
+        'casual', 'formal', 'elegant'
+    ]
+    
+    # Check if user input contains occasion terms
+    current_occasion = None
+    for term in occasion_terms:
+        if term in user_input_lower:
+            current_occasion = term
+            break
+    
+    # Check if previous keywords had different occasions
+    previous_occasion = None
+    if accumulated_keywords:
+        for keyword, _ in accumulated_keywords[:5]:
+            keyword_lower = keyword.lower()
+            for term in occasion_terms:
+                if term in keyword_lower:
+                    previous_occasion = term
+                    break
+            if previous_occasion:
+                break
+    
+    # Only return True for significant occasion changes
+    if current_occasion and previous_occasion and current_occasion != previous_occasion:
+        print(f"🎪 OCCASION CHANGE: {previous_occasion} → {current_occasion}")
+        return True
+    
+    return False
+
+def apply_keyword_decay(user_context):
+    """Apply decay to persistent keywords, especially occasions"""
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    occasion_keywords = ['office', 'kantor', 'party', 'pesta', 'wedding', 'pernikahan', 'beach', 'pantai']
+    
+    decay_applied = 0
+    for keyword, data in user_context["accumulated_keywords"].items():
+        keyword_lower = keyword.lower()
+        
+        # Strong decay for occasion terms
+        if any(occasion in keyword_lower for occasion in occasion_keywords):
+            old_weight = data["weight"]
+            data["weight"] *= 0.6  # 40% decay for occasions
+            decay_applied += 1
+            print(f"   🎪 Occasion decay: '{keyword}' {old_weight:.1f} → {data['weight']:.1f}")
+        
+        # Normal decay for other terms  
+        elif data.get("source") != "user_input":  # Don't decay recent user input
+            data["weight"] *= 0.85  # 15% decay for non-user terms
+    
+    if decay_applied > 0:
+        print(f"⏰ Applied decay to {decay_applied} occasion keywords")
+
+def detect_major_context_switch_in_update(user_input, user_context):
+    """
+    Detect major context switches during keyword updates.
+    """
+    if not user_input or "accumulated_keywords" not in user_context:
+        return False
+    
+    user_input_lower = user_input.lower()
+    
+    # Fashion item categories for detection
+    fashion_categories = {
+        'tops': ['kemeja', 'shirt', 'kaos', 't-shirt', 'blouse', 'atasan', 'top'],
+        'bottoms': ['celana', 'pants', 'rok', 'skirt', 'jeans'],
+        'dresses': ['dress', 'gaun', 'terusan'],
+        'outerwear': ['jaket', 'jacket', 'sweater', 'cardigan', 'hoodie'],
+        'bags': ['tas', 'bag', 'handbag', 'backpack', 'clutch'],
+        'shoes': ['sepatu', 'shoes', 'sneaker', 'heels', 'boots'],
+        'accessories': ['hijab', 'scarf', 'belt', 'topi', 'hat']
+    }
+    
+    # Find current categories in accumulated keywords
+    current_categories = set()
+    for keyword in user_context["accumulated_keywords"].keys():
+        for category, terms in fashion_categories.items():
+            if any(term in keyword for term in terms):
+                current_categories.add(category)
+                break
+    
+    # Find new categories in user input
+    new_categories = set()
+    for category, terms in fashion_categories.items():
+        if any(term in user_input_lower for term in terms):
+            new_categories.add(category)
+    
+    # Check for complete category switch
+    if new_categories and current_categories:
+        if not new_categories.intersection(current_categories):
+            print(f"   🔄 Fashion category switch: {current_categories} → {new_categories}")
+            return True
+    
+    # Check for explicit reset phrases
+    reset_phrases = [
+        'instead', 'not that', 'forget about', 'different',
+        'ganti', 'bukan itu', 'lupakan', 'berbeda',
+        'now show', 'sekarang', 'now i want', 'i want different'
+    ]
+    
+    for phrase in reset_phrases:
+        if phrase in user_input_lower:
+            print(f"   🔄 Reset phrase detected: '{phrase}'")
+            return True
+    
+    return False
+
+def reset_accumulated_keywords_in_update(user_context, reason):
+    """
+    Reset accumulated keywords while preserving essential info.
+    """
+    print(f"🔄 RESETTING KEYWORDS (Reason: {reason})")
+    
+    # Preserve essential user attributes
+    essential_keywords = {}
+    if "accumulated_keywords" in user_context:
+        essential_terms = [
+            'perempuan', 'wanita', 'female', 'woman',
+            'pria', 'laki-laki', 'male', 'man'
+        ]
+        
+        for keyword, data in user_context["accumulated_keywords"].items():
+            if any(essential in keyword.lower() for essential in essential_terms):
+                essential_keywords[keyword] = {
+                    "weight": data["weight"] * 0.1,  # Drastically reduce weight
+                    "count": 1,
+                    "first_seen": datetime.now().isoformat(),
+                    "last_seen": datetime.now().isoformat(),
+                    "source": "preserved_essential"
+                }
+                print(f"   ✅ Preserved: '{keyword}' (reduced weight)")
+    
+    user_context["accumulated_keywords"] = essential_keywords
+    
+    # Clear product cache
+    user_context["product_cache"] = {
+        "all_results": pd.DataFrame(),
+        "current_page": 0,
+        "products_per_page": 5,
+        "has_more": False
+    }
+
+def clean_old_keywords_in_update(user_context):
+    """
+    Clean old and low-weight keywords from accumulated context.
+    """
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    from datetime import datetime, timedelta
+    current_time = datetime.now()
+    
+    keywords_to_remove = []
+    WEIGHT_THRESHOLD = 3.0  # Remove keywords below this weight
+    MAX_AGE_MINUTES = 45    # Remove keywords older than 45 minutes
+    
+    for keyword, data in user_context["accumulated_keywords"].items():
+        # Check age
+        try:
+            if "last_seen" in data:
+                last_seen = datetime.fromisoformat(data["last_seen"])
+            else:
+                last_seen = datetime.fromisoformat(data["first_seen"])
+            
+            age_minutes = (current_time - last_seen).total_seconds() / 60
+            
+            # Apply time decay
+            if age_minutes > 20:  # Start decay after 20 minutes
+                decay_factor = max(0.3, 1 - (age_minutes - 20) / 60)  # Gradual decay
+                data["weight"] *= decay_factor
+            
+            # Remove very old keywords
+            if age_minutes > MAX_AGE_MINUTES:
+                keywords_to_remove.append(keyword)
+                continue
+                
+        except:
+            # Invalid timestamp, apply decay
+            data["weight"] *= 0.5
+        
+        # Remove low weight keywords
+        if data["weight"] < WEIGHT_THRESHOLD:
+            keywords_to_remove.append(keyword)
+    
+    # Remove identified keywords
+    removed_count = 0
+    for keyword in keywords_to_remove:
+        del user_context["accumulated_keywords"][keyword]
+        removed_count += 1
+    
+    if removed_count > 0:
+        print(f"🧹 Cleaned {removed_count} old/low-weight keywords")
+
+def post_update_cleanup(user_context):
+    """
+    Final cleanup after keyword updates.
+    """
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    # Keep only top 40 keywords by weight
+    MAX_KEYWORDS = 40
+    
+    if len(user_context["accumulated_keywords"]) > MAX_KEYWORDS:
+        sorted_keywords = sorted(
+            user_context["accumulated_keywords"].items(),
+            key=lambda x: x[1]["weight"],
+            reverse=True
+        )
+        
+        top_keywords = dict(sorted_keywords[:MAX_KEYWORDS])
+        removed_count = len(user_context["accumulated_keywords"]) - MAX_KEYWORDS
+        
+        user_context["accumulated_keywords"] = top_keywords
+        print(f"📉 Kept top {MAX_KEYWORDS} keywords, removed {removed_count} lowest-weight")
+
+def print_keyword_summary(user_context):
+    """
+    Print a summary of current keywords for debugging.
+    """
+    if "accumulated_keywords" not in user_context:
+        return
+    
+    # Get top 8 keywords
+    top_keywords = sorted(
+        user_context["accumulated_keywords"].items(),
+        key=lambda x: x[1]["weight"],
+        reverse=True
+    )[:8]
+    
+    print(f"\n📊 CURRENT TOP KEYWORDS:")
+    for i, (keyword, data) in enumerate(top_keywords):
+        source_icon = "🗣️" if data["source"] == "user_input" else "🤖" if data["source"] == "ai_response" else "✨"
+        print(f"   {i+1}. {source_icon} '{keyword}' → {data['weight']:.1f} (count: {data['count']})")
+    print()
+    
+def detect_and_update_gender(user_input, user_context, force_update=False):
+    """
+    Detect gender from user input and update context.
+    Only updates if no gender exists or if force_update=True.
+    """
+    current_gender = user_context.get("user_gender", {})
+    has_existing_gender = current_gender.get("category") is not None
+    
+    # Don't detect if we already have gender (unless forced)
+    if has_existing_gender and not force_update:
+        print(f"👤 Using existing gender: {current_gender['category']} (confidence: {current_gender.get('confidence', 0):.1f})")
+        return current_gender["category"]
+    
+    # Gender detection patterns
+    gender_patterns = {
+        'male': [
+            r'\b(pria|laki-laki|male|man|cowok|cowo)\b',
+            r'\buntuk\s+(pria|laki-laki|male|man|cowok)\b',
+            r'\b(saya|i am|i\'m)\s+(pria|laki-laki|male|man)\b'
+        ],
+        'female': [
+            r'\b(perempuan|wanita|female|woman|cewek|cewe)\b',
+            r'\buntuk\s+(perempuan|wanita|female|woman|cewek)\b',
+            r'\b(saya|i am|i\'m)\s+(perempuan|wanita|female|woman)\b'
+        ]
+    }
+    
+    user_input_lower = user_input.lower()
+    detected_gender = None
+    detected_term = None
+    confidence = 0
+    
+    # Check for gender patterns
+    for gender, patterns in gender_patterns.items():
+        for pattern in patterns:
+            match = re.search(pattern, user_input_lower)
+            if match:
+                detected_gender = gender
+                detected_term = match.group(1) if match.lastindex else match.group(0)
+                confidence = 10.0  # High confidence for direct detection
+                break
+        if detected_gender:
+            break
+    
+    # Update gender if detected
+    if detected_gender:
+        user_context["user_gender"] = {
+            "category": detected_gender,
+            "term": detected_term,
+            "confidence": confidence,
+            "last_updated": datetime.now().isoformat()
+        }
+        print(f"👤 Gender detected and saved: {detected_gender} (term: {detected_term}, confidence: {confidence})")
+        return detected_gender
+    
+    # Return existing gender if available
+    if has_existing_gender:
+        print(f"👤 No new gender detected, using existing: {current_gender['category']}")
+        return current_gender["category"]
+    
+    print("👤 No gender detected")
+    return None
+
+def get_user_gender(user_context):
+    """
+    Safely get user gender information from context.
+    """
+    gender_info = user_context.get("user_gender", {})
+    
+    return {
+        "category": gender_info.get("category"),
+        "term": gender_info.get("term"),
+        "confidence": gender_info.get("confidence", 0),
+        "last_updated": gender_info.get("last_updated")
+    }
+
+def detect_gender_change_request(user_input):
+    """
+    Detect if user is explicitly trying to change their gender.
+    """
+    change_patterns = [
+        r'\b(actually|sebenarnya)\s+(i am|saya)\s+(male|female|pria|wanita)',
+        r'\b(change|ganti|ubah)\s+(to|ke|menjadi)\s+(male|female|pria|wanita)',
+        r'\b(i\'m|saya)\s+(not|bukan)\s+(male|female|pria|wanita)',
+        r'\b(correction|koreksi|ralat)',
+    ]
+    
+    user_input_lower = user_input.lower()
+    
+    for pattern in change_patterns:
+        if re.search(pattern, user_input_lower):
+            return True
+    
+    return False
+
+#Caching image analysis
+image_analysis_cache = {}  
+
 async def analyze_uploaded_image(image_url: str):
+
     try:
         if not image_url:
             return "Error: No image URL provided."
         
         logging.info(f"Analyzing image at URL: {image_url}")
+        print(f"Analyzing image URL at: {image_url}")
 
         max_retries = 2
         for attempt in range(max_retries):
             try:
-                response = client.chat.completions.create(
+                response = client.chat.completions.create (
                     model="gpt-4o",
                     messages=[
                         {
@@ -4333,1192 +6493,20 @@ async def analyze_uploaded_image(image_url: str):
                 )
                 
                 analysis = response.choices[0].message.content
+                #Cached the result 
+                image_analysis_cache[image_url] = analysis
+
                 return analysis
             
             except Exception as e:
                 if attempt == max_retries - 1:
-                    logging.info(f"Failed to analyze image at URL: {image_url}. Error: {str(e)}")
+                    logging.info(f"Failed to analyze image at URL: {image_url}. Error: {str(e)}\n{traceback.format_exc()}")
+                    print(f"Failed to analyze image at URL: {image_url}. Error: {str(e)}\n{traceback.format_exc()}")
                     return f"Error: Unable to analyse image. Please try again or use text description instead."
                 else:
-                    await asyncio.sleep(2)
+                    logging.info(f"Retrying image analysis after error: {str(e)}")
+                    await asyncio.sleep(2) #wait before retry
 
     except Exception as e:
         print(f"Error during image analysis: {e}")
         return f"Error: {str(e)}"
-
-# ================================
-# FASTAPI ROUTES (UNCHANGED)
-# ================================
-
-@app.get("/", response_class=HTMLResponse)
-async def chat_page(request: Request):
-    return templates.TemplateResponse("home.html", {"request": request})
-
-@app.on_event("startup")
-async def startup_event():
-    """Enhanced startup with smart embedding initialization"""
-    print("🚀 Starting Enhanced Fashion Chatbot with Hybrid Intelligence...")
-    
-    # Create upload directory
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    
-    # Connect to database
-    await database.connect()
-    await create_tables()
-    
-    # Initialize NLP
-    global nlp
-    try:
-        nlp = spacy.load("en_core_web_sm")
-        print("✅ Spacy English model loaded")
-    except OSError:
-        print("⚠️ Spacy English model not found. Install with: python -m spacy download en_core_web_sm")
-        nlp = None
-    
-    # Initialize hybrid system
-    print("🧠 Hybrid LLM + Vector system ready!")
-    print("✅ Enhanced Fashion Chatbot is ready!")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.post("/upload/")
-async def upload(user_input: str = Form(None), file: UploadFile = None):
-    if not file and not user_input:
-        return JSONResponse(content={"success": False, "error": "No input or file received"})
-
-    try:
-        if file:
-            file_extension = file.filename.split(".")[-1].lower()
-            if file_extension not in ALLOWED_EXTENSIONS:
-                raise HTTPException(status_code=400, detail="Invalid file type.")
-
-            file_content = await file.read()
-            file_size = len(file_content)
-            
-            if file_size == 0:
-                return JSONResponse(content={"success": False, "error": "Uploaded file is empty."})
-                
-            if file_size > 5 * 1024 * 1024:
-                return JSONResponse(content={"success": False, "error": "File size exceeds 5MB limit."})
-            
-            if not os.path.exists(UPLOAD_DIR):
-                os.makedirs(UPLOAD_DIR)
-            
-            unique_id = uuid.uuid4()
-            sanitized_filename = slugify(file.filename.rsplit(".", 1)[0], lowercase=False)
-            unique_filename = f"{unique_id}_{sanitized_filename}.{file_extension}"
-            file_location = os.path.join(UPLOAD_DIR, unique_filename)
-            
-            with open(file_location, "wb") as file_object:
-                file_object.write(file_content)
-            
-            image_url = None
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    image_url = upload_to_cloudinary(file_location)
-                    if image_url:
-                        break
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        logging.error(f"Failed to upload to Cloudinary after {max_retries} attempts: {str(e)}")
-                    else:
-                        time.sleep(1)
-
-            if image_url:
-                return JSONResponse(content={"success": True, "file_url": image_url})
-            else:
-                return JSONResponse(content={"success": False, "error": "Failed to upload image to Cloudinary."})
-
-        elif user_input:
-            return JSONResponse(content={"success": True})
-
-        return JSONResponse(content={"success": False, "error": "No input or file received"})
-
-    except Exception as e:
-        logging.error(f"Error in upload endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail="An error occurred during file upload.")
-
-@app.post("/chat/save")
-async def save_message(message: ChatMessage, db: AsyncSession = Depends(get_db)):
-    try:
-        new_message = ChatHistoryDB(
-            session_id=message.session_id,
-            message_type=message.message_type,
-            content=message.content
-        )
-        db.add(new_message)
-        await db.commit()
-        return {"success": True}
-    except Exception as e:
-        await db.rollback()
-        logging.error(f"Error saving message: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/chat/history/{session_id}")
-async def get_chat_history(session_id: str, db: AsyncSession = Depends(get_db)):
-    try:
-        query = select(ChatHistoryDB).where(
-            ChatHistoryDB.session_id == session_id
-        ).order_by(ChatHistoryDB.timestamp)
-
-        result = await db.execute(query)
-        messages = result.scalars().all()
-
-        return ChatHistoryResponse(
-            messages=[
-                ChatMessage(
-                    session_id=msg.session_id,
-                    message_type=msg.message_type,
-                    content=msg.content
-                ) for msg in messages
-            ]
-        )
-            
-    except Exception as e:
-        await db.rollback()
-        logging.error(f"Error getting chat history: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ================================
-# ENHANCED WEBSOCKET HANDLER WITH HYBRID INTELLIGENCE
-# ================================
-
-# Add this function before the websocket handler
-async def generate_style_recommendations_from_consultation(user_context, user_language, session_id):
-    """
-    ENHANCED: Generate AI-powered style recommendations with specific clothing type guidance
-    """
-    
-    gender = user_context.get("user_gender", {}).get("category", "Not specified")
-    accumulated_keywords = user_context.get("accumulated_keywords", {})
-    
-    # Initialize preference lists including daily activities
-    style_preferences = []
-    clothing_interests = []
-    fit_preferences = []
-    sleeve_preferences = []
-    color_preferences = []
-    occasion_needs = []
-    body_info = []
-    length_preferences = []
-    neckline_preferences = []
-    material_preferences = []
-    daily_activities = []  # NEW: Daily activity preferences
-    
-    print(f"\n🎨 ENHANCED STYLE RECOMMENDATIONS - INCLUDING SPECIFIC CLOTHING TYPES:")
-    print("=" * 60)
-    
-    # ENHANCED: Use FashionCategories for consistent categorization including activities
-    for keyword, data in accumulated_keywords.items():
-        if keyword is None:
-            continue
-            
-        weight = data.get("weight", 0) if isinstance(data, dict) else data
-        source = data.get("source", "unknown") if isinstance(data, dict) else "unknown"
-        
-        # Use lower threshold for style recommendations to capture more details
-        if source == "consultation":
-            threshold = 100
-        elif source == "user_input":
-            threshold = 500
-        else:
-            threshold = 1000
-        
-        print(f"🔍 Analyzing: '{keyword}' → Weight: {weight:.0f}, Source: {source}")
-        
-        if weight > threshold:
-            # ENHANCED: Use FashionCategories.get_category with activity support
-            category = FashionCategories.get_category(keyword)
-            
-            if category == 'body_terms':
-                body_info.append(keyword)
-                print(f"   ✅ BODY: '{keyword}'")
-            elif category == 'activity_terms':  # NEW: Daily activity detection
-                daily_activities.append(keyword)
-                print(f"   ✅ DAILY ACTIVITY: '{keyword}'")
-            elif category == 'sleeve_terms':
-                sleeve_preferences.append(keyword)
-                print(f"   ✅ SLEEVES: '{keyword}'")
-            elif category == 'style_terms':
-                style_preferences.append(keyword)
-                print(f"   ✅ STYLE: '{keyword}'")
-            elif category == 'clothing_terms':
-                clothing_interests.append(keyword)
-                print(f"   ✅ CLOTHING: '{keyword}'")
-            elif category == 'fit_terms':
-                fit_preferences.append(keyword)
-                print(f"   ✅ FIT: '{keyword}'")
-            elif category == 'color_terms':
-                color_preferences.append(keyword)
-                print(f"   ✅ COLORS: '{keyword}'")
-            elif category == 'occasion_terms':
-                occasion_needs.append(keyword)
-                print(f"   ✅ OCCASIONS: '{keyword}'")
-            elif category == 'length_terms':
-                length_preferences.append(keyword)
-                print(f"   ✅ LENGTH: '{keyword}'")
-            elif category == 'neckline_terms':
-                neckline_preferences.append(keyword)
-                print(f"   ✅ NECKLINE: '{keyword}'")
-            elif category == 'material_terms':
-                material_preferences.append(keyword)
-                print(f"   ✅ MATERIAL: '{keyword}'")
-            elif FashionCategories.is_color_preference(keyword):
-                # Special color detection for terms not in exact list
-                color_preferences.append(keyword)
-                print(f"   ✅ SPECIAL COLOR: '{keyword}'")
-            else:
-                print(f"   ❓ UNCATEGORIZED: '{keyword}' (category: {category})")
-        else:
-            print(f"   ⏭️ BELOW THRESHOLD: '{keyword}'")
-    
-    # Clean and deduplicate preferences
-    def clean_preferences(pref_list, max_items=3):
-        """Remove duplicates and limit to max items"""
-        seen = set()
-        cleaned = []
-        for item in pref_list:
-            item_lower = item.lower()
-            if item_lower not in seen and len(cleaned) < max_items:
-                seen.add(item_lower)
-                cleaned.append(item)
-        return cleaned
-    
-    # Apply cleaning to all preference lists including activities
-    body_info = clean_preferences(body_info, 2)
-    daily_activities = clean_preferences(daily_activities, 3)  # NEW: Clean daily activities
-    sleeve_preferences = clean_preferences(sleeve_preferences, 2)
-    style_preferences = clean_preferences(style_preferences, 3)
-    clothing_interests = clean_preferences(clothing_interests, 3)
-    fit_preferences = clean_preferences(fit_preferences, 2)
-    color_preferences = clean_preferences(color_preferences, 3)
-    occasion_needs = clean_preferences(occasion_needs, 3)
-    length_preferences = clean_preferences(length_preferences, 2)
-    neckline_preferences = clean_preferences(neckline_preferences, 2)
-    material_preferences = clean_preferences(material_preferences, 2)
-    
-    print(f"\n📋 CLEANED PREFERENCES FOR ENHANCED STYLE RECOMMENDATIONS:")
-    print(f"   Body Info: {body_info}")
-    print(f"   Daily Activities: {daily_activities}")  # NEW: Debug daily activities
-    print(f"   Sleeves: {sleeve_preferences}")
-    print(f"   Style: {style_preferences}")
-    print(f"   Clothing: {clothing_interests}")
-    print(f"   Fit: {fit_preferences}")
-    print(f"   Colors: {color_preferences}")
-    print(f"   Occasions: {occasion_needs}")
-    print(f"   Length: {length_preferences}")
-    print(f"   Necklines: {neckline_preferences}")
-    print(f"   Materials: {material_preferences}")
-    
-    # ENHANCED: Create comprehensive prompt with specific clothing type guidance
-    style_prompt = f"""You are an expert fashion consultant with deep understanding of how clothing interacts with different body types, proportions, and personal attributes. Your mission is to provide personalized, thoughtful fashion recommendations that enhance each user's unique features.\n\n
-
-**Complete User Profile:**
-- **Gender:** {gender}
-- **Body Information:** {', '.join(body_info) if body_info else 'Not specified'}
-- **Daily Activity/Lifestyle:** {', '.join(daily_activities) if daily_activities else 'Not specified'}
-- **Overall Style:** {', '.join(style_preferences) if style_preferences else 'Not specified'}
-- **Clothing Types Interested In:** {', '.join(clothing_interests) if clothing_interests else 'Not specified'}
-- **Preferred Fit:** {', '.join(fit_preferences) if fit_preferences else 'Not specified'}
-- **Sleeve Preferences:** {', '.join(sleeve_preferences) if sleeve_preferences else 'Not specified'}
-- **Length Preferences:** {', '.join(length_preferences) if length_preferences else 'Not specified'}
-- **Neckline Preferences:** {', '.join(neckline_preferences) if neckline_preferences else 'Not specified'}
-- **Color Preferences:** {', '.join(color_preferences) if color_preferences else 'Not specified'}
-- **Material Preferences:** {', '.join(material_preferences) if material_preferences else 'Not specified'}
-- **Occasions:** {', '.join(occasion_needs) if occasion_needs else 'Not specified'}
-
-**Instructions:**
-Please provide detailed, actionable style recommendations organized as follows:
-
-**1. Specific Clothing Type Recommendations**
-For EACH clothing type the user is interested in, provide detailed guidance:
-
-*If they want SHIRTS/KEMEJA:*
-- Specific shirt types (button-down, blouse, polo, henley, etc.)
-- Best necklines for their body type and preferences
-- Sleeve styles that work best for them
-- Fit recommendations (fitted, relaxed, oversized) based on their body
-- Colors and patterns that complement their skin tone
-- Styling tips for their daily activities
-
-*If they want DRESSES/GAUN:*
-- Dress silhouettes that flatter their body type (A-line, bodycon, shift, wrap, etc.)
-- Best lengths for their preferences and body proportions
-- Neckline styles that work for them
-- Sleeve options that suit their preferences
-- Colors and patterns for their style
-- Occasion-appropriate styling
-
-*If they want PANTS/CELANA:*
-- Pant styles that flatter their body type (straight, wide-leg, skinny, bootcut, etc.)
-- Best rise (high-waist, mid-rise, low-rise) for their body
-- Length recommendations
-- Fit preferences that work for their lifestyle
-- Colors and styling tips
-
-*If they want SKIRTS/ROK:*
-- Skirt styles that complement their body type (A-line, pencil, pleated, etc.)
-- Best lengths for their body proportions
-- Waistline styles that flatter them
-- Colors and styling suggestions
-
-*If they want BLAZERS/JACKETS:*
-- Blazer styles that work for their body type and activities
-- Best fit and structure for their preferences
-- Styling for both casual and formal occasions
-- Color recommendations
-
-**2. Body Type Specific Recommendations**
-Based on their body information, explain:
-- Silhouettes that enhance their natural proportions
-- Clothing details that create the most flattering look
-- What to emphasize and what to balance
-- Specific cuts and styles to look for
-
-**3. Lifestyle Integration**
-Based on their daily activities and occasions:
-- How to style each clothing type for their work/lifestyle
-- Versatile pieces that work for multiple activities
-- Practical considerations for their daily routine
-- Transition pieces from day to night or casual to formal
-
-**4. Color & Styling Strategy**
-- Specific color recommendations for each clothing type
-- Color combinations that work with their preferences
-- How to incorporate their preferred colors into different pieces
-- Pattern suggestions that suit their style and body type
-
-**5. Complete Outfit Ideas** (3-4 outfit suggestions)
-Create complete outfits using their preferred clothing types:
-- Exact pieces (specify the recommended clothing types from above)
-- How each piece flatters their body type
-- Why it matches their style and activity needs
-- Styling details and accessories
-
-**6. Shopping Tips**
-- Key details to look for when shopping for each clothing type
-- Fit checkpoints specific to their body type
-- Quality indicators for their preferred materials
-- How to spot pieces that match their style preferences
-
-Format with clear markdown headers and bullet points. Be very specific with clothing names, cuts, and styling details. Make sure to address each clothing type they're interested in with detailed, personalized guidance.
-
-End with asking if they'd like to see actual product recommendations that match these specific clothing type suggestions."""
-
-    try:
-        print(f"🤖 Generating enhanced clothing-specific style recommendations for user language: {user_language}")
-        
-        # Generate style recommendations using OpenAI
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": style_prompt}],
-            temperature=0.7,
-            max_tokens=1500  # Increased for more detailed clothing-specific recommendations
-        )
-        
-        style_recommendations = response.choices[0].message.content.strip()
-        
-        # Add enhanced call-to-action with clothing-specific language
-        style_recommendations += "\n\n---\n\n**Ready to Find Your Perfect Pieces?** 🛍️\n\nSay **'yes'**, **'looks good'**, or **'show me products'** to see actual clothing items that match these specific recommendations for your body type, style, and lifestyle needs!"
-        
-        # UPDATED: Better translation handling
-        if user_language != "en":
-            print(f"🌍 Translating enhanced clothing-specific recommendations from English to {user_language}")
-            try:
-                # Use the centralized translation function
-                translated_recommendations = translate_text(style_recommendations, user_language, session_id)
-                print(f"✅ Enhanced clothing-specific recommendations translation successful")
-                return translated_recommendations
-            except Exception as e:
-                print(f"❌ Style recommendations translation failed: {e}")
-                print(f"   Keeping original English version")
-                # Return English version if translation fails
-                return style_recommendations
-        
-        return style_recommendations
-        
-    except Exception as e:
-        print(f"❌ Error generating enhanced clothing-specific style recommendations: {e}")
-        
-        # ENHANCED: Better fallback message with clothing-specific guidance
-        fallback_sections = []
-        
-        if clothing_interests:
-            fallback_sections.append(f"**Clothing Types:** {', '.join(clothing_interests[:3])}")
-        
-        if style_preferences:
-            fallback_sections.append(f"**Your Style:** {', '.join(style_preferences[:2])}")
-        
-        if body_info:
-            fallback_sections.append(f"**Body Type:** {', '.join(body_info[:2])}")
-        
-        if fit_preferences:
-            fallback_sections.append(f"**Preferred Fit:** {', '.join(fit_preferences[:2])}")
-        
-        if daily_activities:
-            fallback_sections.append(f"**Daily Activities:** {', '.join(daily_activities[:2])}")
-        
-        if sleeve_preferences:
-            fallback_sections.append(f"**Sleeve Style:** {', '.join(sleeve_preferences[:2])}")
-        
-        if color_preferences:
-            fallback_sections.append(f"**Colors:** {', '.join(color_preferences[:2])}")
-        
-        if occasion_needs:
-            fallback_sections.append(f"**Occasions:** {', '.join(occasion_needs[:2])}")
-        
-        # Create personalized fallback message with clothing-specific guidance
-        if fallback_sections:
-            personalized_info = "\n".join([f"• {section}" for section in fallback_sections])
-            
-            # Create clothing-specific recommendations based on detected interests
-            clothing_specific_tips = ""
-            if clothing_interests:
-                clothing_specific_tips = "\n\n**Specific Recommendations for Your Clothing Interests:**\n"
-                for clothing in clothing_interests[:3]:
-                    if 'shirt' in clothing.lower() or 'kemeja' in clothing.lower():
-                        clothing_specific_tips += f"• **{clothing.title()}**: Look for fits that complement your body type, choose necklines that flatter you, and select colors from your preferred palette\n"
-                    elif 'dress' in clothing.lower() or 'gaun' in clothing.lower():
-                        clothing_specific_tips += f"• **{clothing.title()}**: Choose silhouettes that enhance your proportions, select lengths that work for your lifestyle, and pick styles suitable for your occasions\n"
-                    elif 'pants' in clothing.lower() or 'celana' in clothing.lower():
-                        clothing_specific_tips += f"• **{clothing.title()}**: Select cuts that flatter your body shape, choose rises that work for your torso, and pick styles that match your activity level\n"
-                    elif 'skirt' in clothing.lower() or 'rok' in clothing.lower():
-                        clothing_specific_tips += f"• **{clothing.title()}**: Choose styles that complement your hip and waist proportions, select lengths that work for your height, and pick fits that match your comfort level\n"
-                    elif 'blazer' in clothing.lower() or 'jaket' in clothing.lower():
-                        clothing_specific_tips += f"• **{clothing.title()}**: Look for structures that enhance your silhouette, choose lengths that proportion well with your body, and select styles that work for your professional needs\n"
-                    else:
-                        clothing_specific_tips += f"• **{clothing.title()}**: Choose pieces that align with your style preferences, fit well with your body type, and work for your daily activities\n"
-            
-            fallback_message = f"""**Your Personalized Style Recommendations** ✨
-
-Based on your consultation, here's what works best for you:
-
-{personalized_info}{clothing_specific_tips}
-
-**General Guidelines:**
-• Choose clothing that complements your body type and enhances your best features
-• Stick to your preferred fits and styles for confidence and comfort
-• Incorporate your favorite colors into each clothing type you're interested in
-• Select pieces suitable for your lifestyle and daily activities
-• Focus on quality pieces that can be mixed and matched across occasions
-
-**Next Steps:**
-Say **'yes'** or **'show me products'** to see clothing recommendations that match your specific style and body type needs! 🛍️"""
-        else:
-            # Generic fallback if no preferences detected
-            fallback_message = """**Your Personalized Style Recommendations** ✨
-
-I'd love to provide more specific clothing recommendations, but I need a bit more information about your preferences.
-
-**General Style Tips:**
-• **For Shirts**: Choose necklines and fits that flatter your body type
-• **For Dresses**: Select silhouettes that enhance your natural proportions  
-• **For Pants**: Pick cuts and rises that work best for your body shape
-• **For Skirts**: Choose lengths and styles that complement your figure
-• **For Blazers**: Look for structures that create a polished, flattering silhouette
-
-**Next Steps:**
-Say **'yes'** or **'show me products'** to explore clothing options, or share more about your style preferences for better personalized recommendations! 🛍️"""
-        
-        # UPDATED: Translate fallback message if needed
-        if user_language != "en":
-            print(f"🌍 Translating clothing-specific fallback message from English to {user_language}")
-            try:
-                translated_fallback = translate_text(fallback_message, user_language, session_id)
-                print(f"✅ Fallback message translation successful")
-                return translated_fallback
-            except Exception as e:
-                print(f"❌ Fallback message translation failed: {e}")
-                print(f"   Keeping original English version")
-        
-        return fallback_message
-        
-@app.websocket("/ws")
-async def chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
-    try:
-        await websocket.accept()
-        session_id = str(uuid.uuid4())
-        await websocket.send_text(f"{session_id}|🧠 Enhanced Fashion Assistant with Hybrid Intelligence Ready!\n\nSelamat Datang! Bagaimana saya bisa membantu Anda hari ini?\n\nWelcome! How can I help you today?")
-
-        # Initialize enhanced system for this session
-        print(f"✅ Session {session_id}: Hybrid LLM + Vector system ENABLED")
-
-        # Enhanced system prompt (keep your existing one)
-        message_objects = [{
-            "role": "system",
-            "content": (
-                "You are an expert fashion consultant with deep understanding of how clothing interacts with different body types, proportions, and personal attributes. Your mission is to provide personalized, thoughtful fashion recommendations that enhance each user's unique features.\n\n"
-                
-                "CONVERSATION CONTEXT & MEMORY:\n"
-                "- Always remember and reference information the user has shared throughout our conversation\n"
-                "- Build upon previous recommendations and acknowledge their preferences or concerns\n"
-                "- If they mention budget, lifestyle, or specific needs, keep these in mind for all future suggestions\n"
-                "- Reference their previous questions or comments to show you're actively listening\n\n"
-                
-                "CONSULTATION PROCESS:\n"
-                "Gather information through natural, conversational questions. Ask 2-3 questions at a time to avoid overwhelming the user. Make sure to cover ALL categories below before providing recommendations.\n\n"
-                
-                "ESSENTIAL INFORMATION TO GATHER:\n\n"
-                
-                "**Basic Personal Information:**\n"
-                "- Gender identity and preferred clothing styles\n"
-                "- Height and weight (for proportion considerations)\n"
-                "- Body shape/type if comfortable sharing (apple, pear, hourglass, rectangle, inverted triangle)\n"
-                "- Skin tone and undertones (warm, cool, or neutral)\n"
-                "- Lifestyle (professional, casual, active, student, etc.)\n"
-                "- Budget range if relevant\n"
-                "- Any body areas they want to highlight or feel more confident about\n"
-                "- Any areas they prefer to minimize or feel less confident about\n\n"
-                
-                "**Detailed Style Preferences (Ask with Clear Examples):**\n\n"
-                
-                "**Sleeve Preferences** - Ask: 'What sleeve styles do you prefer?'\n"
-                "Provide examples and ask them to choose:\n"
-                "- Sleeveless (tank tops, sleeveless blouses)\n"
-                "- Cap sleeves (very short sleeves that just cover the shoulder)\n"
-                "- Short sleeves (t-shirt style, ending mid-upper arm)\n"
-                "- 3/4 sleeves (ending between elbow and wrist)\n"
-                "- Long sleeves (full arm coverage)\n"
-                "- Bell sleeves (fitted at shoulder, flaring out)\n"
-                "- Fitted sleeves vs. loose/flowing sleeves\n"
-                "- Comfort level with showing arms\n\n"
-                
-                "**Fit Preferences** - Ask: 'How do you prefer your clothes to fit your body?'\n"
-                "Provide examples and ask them to choose:\n"
-                "- Slim/tailored fit (follows body shape closely, like fitted blazers or skinny jeans)\n"
-                "- Regular fit (comfortable fit with some room, like straight-leg jeans or classic t-shirts)\n"
-                "- Relaxed/oversized fit (loose and roomy, like boyfriend jeans or oversized sweaters)\n"
-                "- Body-hugging (form-fitting like bodycon dresses or compression tops)\n"
-                "- Flowing/loose (drapes away from body like A-line dresses or palazzo pants)\n"
-                "- Different preferences for tops vs. bottoms\n\n"
-                
-                "**Length Preferences** - Ask: 'What lengths do you prefer for different clothing items?'\n"
-                "Provide examples for each category:\n\n"
-                
-                "*Top Lengths:*\n"
-                "- Cropped (ends above waist, showing midriff)\n"
-                "- Regular (ends at waist or hip bone)\n"
-                "- Tunic length (ends mid-thigh, longer than regular)\n"
-                "- Long/oversized (ends at or below mid-thigh)\n\n"
-                
-                "*Bottom Lengths:*\n"
-                "- Mini (very short, ends mid-thigh)\n"
-                "- Above knee (ends 2-4 inches above knee)\n"
-                "- Knee length (ends at the knee)\n"
-                "- Below knee/midi (ends between knee and ankle)\n"
-                "- Maxi/full length (ends at or near ankle)\n\n"
-                
-                "*Dress Lengths:*\n"
-                "- Mini dress (ends mid-thigh)\n"
-                "- Knee-length dress\n"
-                "- Midi dress (ends between knee and ankle)\n"
-                "- Maxi dress (ends at or near ankle)\n\n"
-                
-                "**Additional Style Details:**\n"
-                "- Neckline preferences (V-neck, crew neck, scoop neck, off-shoulder, etc.)\n"
-                "- Pattern preferences (solid colors, stripes, florals, geometric, etc.)\n"
-                "- Color preferences and colors to avoid\n"
-                "- Fabric preferences (cotton, silk, denim, knits, etc.)\n"
-                "- Occasion focus (work, casual, special events, etc.)\n\n"
-                
-                "RECOMMENDATION FORMAT:\n"
-                "Only provide recommendations AFTER gathering ALL necessary information. Provide at least 3-5 detailed recommendations using this structure:\n\n"
-                
-                "**[Clothing Item Name]**\n"
-                "- *Why it works for you:* Detailed explanation addressing their body type, proportions, and skin tone\n"
-                "- *Perfect fit for your preferences:* How it matches their stated sleeve, fit, and length preferences\n"
-                "- *Styling tips:* Specific suggestions for colors, accessories, and how to wear it\n"
-                "- *Lifestyle compatibility:* How it fits their daily life and occasions\n\n"
-                
-                "CONSULTATION CONFIRMATION PROCESS:\n"
-                "Before providing final recommendations, always provide this comprehensive summary:\n\n"
-                
-                "**CONSULTATION SUMMARY**\n"
-                "Let me confirm all the information I've gathered to ensure my recommendations will be perfectly tailored for you:\n\n"
-                
-                "**Personal Details:**\n"
-                "- Gender Identity & Style: [user's response]\n"
-                "- Height & Weight: [user's response]\n"
-                "- Body Shape: [user's response]\n"
-                "- Skin Tone & Undertones: [user's response]\n"
-                "- Lifestyle: [user's response]\n"
-                "- Budget: [user's response if mentioned]\n"
-                "- Areas to highlight: [user's response]\n"
-                "- Areas to minimize: [user's response]\n\n"
-                
-                "**Style Preferences:**\n"
-                "- Sleeve Preferences: [user's specific choices from the options provided]\n"
-                "- Fit Preferences: [user's specific choices from the options provided]\n"
-                "- Length Preferences: [user's specific choices for tops, bottoms, and dresses]\n"
-                "- Neckline Preferences: [user's response]\n"
-                "- Pattern & Color Preferences: [user's response]\n"
-                "- Fabric Preferences: [user's response]\n"
-                "- Primary Occasions: [user's response]\n\n"
-                
-                "**Confirmation Question:**\n"
-                "'Is all of this information accurate and complete? Please let me know if anything needs to be corrected or if you'd like to add any additional preferences. Once you confirm this summary is correct, I'll provide you with 3-5 personalized style recommendations that perfectly match your body type, lifestyle, and all your specific preferences!'\n\n"
-                
-                "IMPORTANT GUIDELINES:\n"
-                "- Never make assumptions about preferences - always ask directly with clear examples\n"
-                "- If a user seems unsure about any category, provide more examples and context\n"
-                "- Always explain WHY certain styles work for their specific combination of body type and preferences\n"
-                "- Be encouraging and positive while being honest about what will work best\n"
-                "- Remember that confidence is the best accessory - help them feel great in their choices\n"
-            )
-        }]
-        
-        last_ai_response = ""
-        
-        # Enhanced user context with hybrid capabilities
-        user_context = {
-            "current_image_url": None,
-            "current_text_input": None,
-            "pending_image_analysis": False,
-            "has_shared_image": False,
-            "has_shared_preferences": False,
-            "last_query_type": None,
-            "awaiting_confirmation": False,
-            "confirmation_type": None,  # NEW: Track what type of confirmation we're waiting for
-            "accumulated_keywords": {},
-            "preferences": {},
-            "known_attributes": {},
-            "user_gender": {
-                "category": None,
-                "term": None, 
-                "confidence": 0,
-                "last_updated": None
-            },
-            "product_cache": {
-                "all_results": pd.DataFrame(),
-                "current_page": 0,
-                "products_per_page": 5,
-                "last_search_params": {},
-                "has_more": False
-            },
-            "semantic_enabled": True,  # Always enabled with hybrid system
-            "cultural_context": {},
-        }
-
-        while True:            
-            try:
-                data = await websocket.receive_text()
-                logging.info(f"Received Websocket data: {data}")
-                
-                if "|" not in data:
-                    await websocket.send_text(f"{session_id}|Invalid message format.")
-                    continue
-                    
-                session_id, user_input = data.split("|", 1)
-                
-                # Save user message to database
-                new_user_message = ChatHistoryDB(
-                    session_id=session_id,
-                    message_type="user",
-                    content=user_input
-                )
-                db.add(new_user_message)
-                await db.commit()
-                
-                # Detect language
-                try:
-                    user_language = session_manager.detect_or_retrieve_language(user_input, session_id)
-                    logging.info(f"User language '{user_language}' for session {session_id}")
-                except Exception as e:
-                    logging.error(f"Language detection error: {str(e)}")
-                    user_language = "en"
-                
-                # UPDATED: Enhanced confirmation handling with 3-step flow
-                if user_context["awaiting_confirmation"]:
-                    # Process confirmation response
-                    is_positive = user_input.strip().lower() in ["yes", "ya", "iya", "sure", "tentu", "ok", "okay"]
-                    is_negative = user_input.strip().lower() in ["no", "tidak", "nope", "nah", "tidak usah"]
-                    is_more_request = detect_more_products_request(user_input)
-                    
-                    # Enhanced confirmation detection
-                    confirmation_phrases = [
-                        'this is correct', 'looks good', 'that\'s right', 'accurate', 
-                        'yes this is right', 'benar', 'tepat', 'sesuai', 'iya benar',
-                        'proceed', 'lanjut', 'looks accurate', 'this looks good', 
-                        'terlihat bagus', 'bagus', 'cocok', 'betul', 'oke', 'sudah benar'
-                    ]
-                    
-                    is_confirming = is_positive or any(phrase in user_input.lower() for phrase in confirmation_phrases)
-                    
-                    # STEP 1: Handle confirmation based on confirmation type
-                    if is_confirming and user_context.get("confirmation_type") == "summary":
-                        # User confirmed consultation summary → Generate AI style recommendations
-                        print("✅ User confirmed summary → Generating style recommendations")
-                        
-                        try:
-                            # Generate style recommendations using the new function
-                            style_recommendations = await generate_style_recommendations_from_consultation(
-                                user_context, user_language, session_id
-                            )
-                            
-                            # Update confirmation type for next step
-                            user_context["confirmation_type"] = "style_recommendations"
-                            user_context["awaiting_confirmation"] = True
-                            
-                            # Save and send style recommendations
-                            new_ai_message = ChatHistoryDB(
-                                session_id=session_id,
-                                message_type="assistant",
-                                content=style_recommendations
-                            )
-                            db.add(new_ai_message)
-                            await db.commit()
-                            
-                            ai_response_html = render_markdown(style_recommendations)
-                            await websocket.send_text(f"{session_id}|{ai_response_html}")
-                            
-                        except Exception as e:
-                            logging.error(f"Error generating style recommendations: {str(e)}")
-                            error_msg = "I'm sorry, I had trouble generating style recommendations. Let me try again."
-                            if user_language != "en":
-                                error_msg = translate_text(error_msg, user_language, session_id)
-                            await websocket.send_text(f"{session_id}|{error_msg}")
-                        
-                        continue
-                    
-                    # STEP 2: Handle style recommendations confirmation → Product search
-                    elif is_confirming and user_context.get("confirmation_type") == "style_recommendations":
-                        print("✅ User confirmed style recommendations → Searching products")
-                        try:
-                            # Use enhanced product search with consultation keyword boost
-                            recommended_products, positive_response = await enhanced_product_search_in_websocket(
-                                user_context, db, user_language, session_id
-                            )
-                            
-                            # Cache results for pagination
-                            user_context["product_cache"]["all_results"] = recommended_products
-                            user_context["product_cache"]["current_page"] = 0
-                            user_context["product_cache"]["has_more"] = len(recommended_products) > 5
-
-                            first_page_products, has_more = get_paginated_products(
-                                recommended_products,
-                                page=0, 
-                                products_per_page=5
-                            )
-
-                            user_context["product_cache"]["has_more"] = has_more
-
-                            # Create enhanced response using your existing product card format
-                            if not first_page_products.empty:
-                                complete_response = positive_response + "\n\n"
-                                
-                                for _, row in first_page_products.iterrows():
-                                    product_card = (
-                                        "<div class='product-card'>\n"
-                                        f"<img src='{row['photo']}' alt='{row['product']}' class='product-image'>\n"
-                                        f"<div class='product-info'>\n"
-                                        f"<h3>🎯 **Enhanced Match** | {row['product']}</h3>\n"
-                                        f"<p class='price'>IDR {row['price']:,.0f}</p>\n"
-                                        f"<p class='description'>{row['description']}</p>\n"
-                                        f"<p class='available'>Available in size: {row['size']}, Color: {row['color']}</p>\n"
-                                        f"<a href='{row['link']}' target='_blank' class='product-link'>Buy Now</a>\n"
-                                        "</div>\n"
-                                        "</div>\n"
-                                    )
-                                    complete_response += product_card
-                                
-                                if has_more:
-                                    complete_response += "\n\n🧠 **Want to see more AI-matched products?** Just ask for 'more products' or 'lainnya'!"
-                            else:
-                                complete_response = positive_response + "\n\nI'm sorry, but I couldn't find specific product recommendations at the moment. Would you like me to help you with something else?"
-
-                            # Handle translation while protecting HTML using your existing logic
-                            if user_language != "en":
-                                try:
-                                    def encode_html_blocks(text):
-                                        pattern = r'(<div class=\'product-card\'>.*?</div>\n)'
-                                        blocks = []
-                                        
-                                        def replace_block(match):
-                                            nonlocal blocks
-                                            placeholder = f"__HTML_BLOCK_{len(blocks)}__"
-                                            blocks.append(match.group(0))
-                                            return placeholder
-                                        
-                                        protected_text = re.sub(pattern, replace_block, text, flags=re.DOTALL)
-                                        return protected_text, blocks
-                                    
-                                    def decode_html_blocks(text, blocks):
-                                        for i, block in enumerate(blocks):
-                                            text = text.replace(f"__HTML_BLOCK_{i}__", block)
-                                        return text
-                                    
-                                    protected_text, html_blocks = encode_html_blocks(complete_response)
-                                    translated_protected = translate_text(protected_text, user_language, session_id)
-                                    translated_response = decode_html_blocks(translated_protected, html_blocks)
-                                    
-                                except Exception as e:
-                                    logging.error(f"Error in HTML protection during translation: {str(e)}")
-                                    translated_response = complete_response
-                            else:
-                                translated_response = complete_response
-                            
-                            # Save response to database
-                            new_ai_message = ChatHistoryDB(
-                                session_id=session_id,
-                                message_type="assistant",
-                                content=complete_response
-                            )
-                            db.add(new_ai_message)
-                            await db.commit()
-                            
-                            # Send the enhanced response
-                            complete_response_html = render_markdown(translated_response)
-                            await websocket.send_text(f"{session_id}|{complete_response_html}")
-                            
-                            # Reset confirmation after showing products
-                            user_context["awaiting_confirmation"] = True
-                            user_context["confirmation_type"] = "products"
-                            
-                        except Exception as e:
-                            logging.error(f"Error during enhanced product recommendation: {str(e)}")
-                            error_msg = "I'm sorry, I couldn't fetch product recommendations. Is there something else you'd like to know about fashion?"
-                            if user_language != "en":
-                                error_msg = translate_text(error_msg, user_language, session_id)
-                            await websocket.send_text(f"{session_id}|{error_msg}")
-                        
-                        continue
-                    # STEP 3: Handle existing product pagination and other responses
-                    elif is_more_request:
-                        # Use your existing "more products" logic
-                        if not user_context["product_cache"]["all_results"].empty:
-                            current_page = user_context["product_cache"]["current_page"]
-                            next_page = current_page + 1
-                            
-                            next_page_products, has_more = get_paginated_products(
-                                user_context["product_cache"]["all_results"],
-                                page=next_page,
-                                products_per_page=5
-                            )
-                            
-                            if not next_page_products.empty:
-                                user_context["product_cache"]["current_page"] = next_page
-                                user_context["product_cache"]["has_more"] = has_more
-                                
-                                more_response = "🧠 Here are more AI-matched options for you:"
-                                if user_language != "en":
-                                    more_response = translate_text(more_response, user_language, session_id)
-                                
-                                complete_response = more_response + "\n\n"
-                                
-                                for _, row in next_page_products.iterrows():
-                                    product_card = (
-                                        "<div class='product-card'>\n"
-                                        f"<img src='{row['photo']}' alt='{row['product']}' class='product-image'>\n"
-                                        f"<div class='product-info'>\n"
-                                        f"<h3>🎯 **Enhanced Match** | {row['product']}</h3>\n"
-                                        f"<p class='price'>IDR {row['price']:,.0f}</p>\n"
-                                        f"<p class='description'>{row['description']}</p>\n"
-                                        f"<p class='available'>Available in size: {row['size']}, Color: {row['color']}</p>\n"
-                                        f"<a href='{row['link']}' target='_blank' class='product-link'>Buy Now</a>\n"
-                                        "</div>\n"
-                                        "</div>\n"
-                                    )
-                                    complete_response += product_card
-                                
-                                if has_more:
-                                    more_hint = "\n\n🧠 I have even more AI-matched options! Just let me know if you want to continue exploring."
-                                    if user_language != "en":
-                                        more_hint = translate_text(more_hint, user_language, session_id)
-                                    complete_response += more_hint
-                                
-                                # Save and send response
-                                new_ai_message = ChatHistoryDB(
-                                    session_id=session_id,
-                                    message_type="assistant",
-                                    content=complete_response
-                                )
-                                db.add(new_ai_message)
-                                await db.commit()
-                                
-                                complete_response_html = render_markdown(complete_response)
-                                await websocket.send_text(f"{session_id}|{complete_response_html}")
-                                
-                                user_context["awaiting_confirmation"] = True
-                            else:
-                                no_more_msg = "🎯 I've shown you all the best AI matches I could find. Would you like to try a different style or adjust your preferences?"
-                                if user_language != "en":
-                                    no_more_msg = translate_text(no_more_msg, user_language, session_id)
-                                await websocket.send_text(f"{session_id}|{no_more_msg}")
-                        
-                        continue
-                        
-                    elif is_negative:
-                        # User declined
-                        negative_response = "I understand. What specific styles or fashion advice would you prefer instead? I'm here to help you find the perfect look."
-                        if user_language != "en":
-                            negative_response = translate_text(negative_response, user_language, session_id)
-                        await websocket.send_text(f"{session_id}|{negative_response}")
-                        user_context["awaiting_confirmation"] = False
-                        continue
-                    
-                    else:
-                        # Continue with regular processing
-                        user_context["awaiting_confirmation"] = False
-                
-                # Check if input contains an image URL (keep your existing image processing)
-                url_pattern = re.compile(r'(https?://\S+\.(?:jpg|jpeg|png|gif|bmp|webp))', re.IGNORECASE)
-                image_url_match = url_pattern.search(user_input)
-                
-                if not user_context["awaiting_confirmation"] and image_url_match:
-                    # Use your existing image processing logic
-                    image_url = image_url_match.group(1)
-                    text_content = user_input.replace(image_url, "").strip()
-                    
-                    try:
-                        user_context["has_shared_image"] = True
-                        user_context["last_query_type"] = "mixed" if text_content else "image"
-                        user_context["current_image_url"] = image_url
-                        user_context["current_text_input"] = text_content
-
-                        # Call image analysis
-                        clothing_features = await analyze_uploaded_image(image_url)
-
-                        if clothing_features.startswith("Error:"):
-                            await websocket.send_text(f"{session_id}|{clothing_features}")
-                            continue
-
-                        # Enhanced gender detection from text content
-                        if text_content:
-                            detect_and_update_gender(text_content, user_context)
-
-                        # Prepare enhanced prompt
-                        user_gender_info = user_context.get("user_gender", {})
-                        gender_context = ""
-                        if user_gender_info.get("category"):
-                            gender_context = f" I am {user_gender_info['category']}."
-                        
-                        semantic_context = " Please provide detailed style recommendations that I can use for enhanced AI-powered product matching."
-                            
-                        if text_content:
-                            prompt = f"I've shared an image with the following request: '{text_content}'.{gender_context}{semantic_context} Here's what the image shows: {clothing_features}. Please give me style recommendations based on this image and my specific request, but DO NOT offer product recommendations yet."
-                        else:
-                            prompt = f"I've shared an image.{gender_context}{semantic_context} Here's what the image shows: {clothing_features}. Please give me style recommendations based on this image, but DO NOT offer product recommendations yet."
-                        
-                        # Generate styling recommendations
-                        message_objects.append({
-                            "role": "user",
-                            "content": prompt
-                        })
-
-                        response = openai.chat.completions.create(
-                            model="gpt-3.5-turbo",
-                            messages=message_objects,
-                            temperature=0.5
-                        )
-                        
-                        ai_response = response.choices[0].message.content.strip()
-                        last_ai_response = ai_response
-                        user_context["last_ai_response"] = ai_response
-                        
-                        message_objects.append({
-                            "role": "assistant",
-                            "content": ai_response
-                        })
-
-                        # Enhanced keyword extraction from image analysis
-                        image_keywords = await extract_ranked_keywords(clothing_features, "", [])
-                        update_accumulated_keywords(image_keywords, user_context, user_input, is_user_input=True)
-                        
-                        # Process text content keywords if available
-                        if text_content:
-                            text_keywords = await extract_ranked_keywords("", text_content, [])
-                            update_accumulated_keywords(text_keywords, user_context, user_input, is_user_input=True)
-                        
-                        # Extract keywords from AI style suggestions
-                        style_keywords = await extract_ranked_keywords(ai_response, "", [])
-                        update_accumulated_keywords(style_keywords, user_context, user_input, is_ai_response=True)
-                        
-                        # Translate if needed
-                        if user_language != "en":
-                            translated_ai_response = translate_text(ai_response, user_language, session_id)
-                        else:
-                            translated_ai_response = ai_response
-
-                        # Save and send styling recommendations
-                        new_ai_message = ChatHistoryDB(
-                            session_id=session_id,
-                            message_type="assistant",
-                            content=ai_response
-                        )
-                        db.add(new_ai_message)
-                        await db.commit()
-                        
-                        ai_response_html = render_markdown(translated_ai_response)
-                        await websocket.send_text(f"{session_id}|{ai_response_html}")
-                        
-                        user_context["awaiting_confirmation"] = True
-                        user_context["confirmation_type"] = "style_recommendations"  # Skip consultation for images
-
-                    except Exception as input_error:
-                        logging.error(f"Error during enhanced image processing: {str(input_error)}")
-                        error_msg = "Sorry, there was an issue processing your image. Could you try again?"
-                        await websocket.send_text(f"{session_id}|{error_msg}")
-                
-                # Handle normal text input with hybrid intelligence
-                elif not user_context["awaiting_confirmation"]:
-                    # Check for small talk
-                    if await is_small_talk(user_input):
-                        ai_response = "🧠 Hello! I'm your enhanced AI fashion assistant. How can I help you with personalized fashion recommendations today? Feel free to share information about your style preferences or upload an image for AI-powered suggestions."
-                        
-                        if user_language != "en":
-                            ai_response = translate_text(ai_response, user_language, session_id)
-                            
-                        await websocket.send_text(f"{session_id}|{ai_response}")
-                        continue
-                    
-                    # USE HYBRID INTELLIGENCE HANDLER
-                    hybrid_response, should_search_products = await handle_message_with_hybrid_intelligence(
-                        user_input, session_id, user_context, db, user_language
-                    )
-                    
-                    if hybrid_response and hybrid_response != "TRIGGER_PRODUCT_SEARCH":
-                        # Save AI message
-                        new_ai_message = ChatHistoryDB(
-                            session_id=session_id,
-                            message_type="assistant",
-                            content=hybrid_response
-                        )
-                        db.add(new_ai_message)
-                        await db.commit()
-                        
-                        # Set confirmation type based on the hybrid response
-                        if "**YOUR FASHION PROFILE**" in hybrid_response:
-                            # This is a consultation summary
-                            user_context["confirmation_type"] = "summary"
-                            user_context["awaiting_confirmation"] = True
-                        elif "**Personalized Style Recommendations**" in hybrid_response:
-                            # This is style recommendations
-                            user_context["confirmation_type"] = "style_recommendations"
-                            user_context["awaiting_confirmation"] = True
-                        
-                        # Send response
-                        await websocket.send_text(f"{session_id}|{hybrid_response}")
-                        continue
-                    
-                    elif should_search_products or hybrid_response == "TRIGGER_PRODUCT_SEARCH":
-                        # This should not happen in the new flow, but keep as fallback
-                        user_context["awaiting_confirmation"] = True
-                        user_context["confirmation_type"] = "summary"
-                        
-                        # Generate consultation summary
-                        summary_response = await generate_consultation_summary_llm(user_context, user_language, session_id)
-                        
-                        new_ai_message = ChatHistoryDB(
-                            session_id=session_id,
-                            message_type="assistant",
-                            content=summary_response
-                        )
-                        db.add(new_ai_message)
-                        await db.commit()
-                        
-                        await websocket.send_text(f"{session_id}|{summary_response}")
-                        continue
-                    
-                    else:
-                        # Fall back to existing OpenAI chat logic
-                        user_context["last_query_type"] = "text"
-                        user_context["current_text_input"] = user_input
-
-                        # Translate if needed
-                        if user_language != "en":
-                            translated_input = translate_text(user_input, "en", session_id)
-                        else:
-                            translated_input = user_input
-                        
-                        # Enhanced gender detection
-                        detect_and_update_gender(translated_input, user_context)
-                            
-                        # Enhanced keyword extraction
-                        accumulated_keywords = [(k, v.get("weight", 0) if isinstance(v, dict) else v) 
-                                              for k, v in user_context.get("accumulated_keywords", {}).items()]
-                        
-                        input_keywords = await extract_ranked_keywords("", translated_input, accumulated_keywords)
-                        update_accumulated_keywords(input_keywords, user_context, user_input, is_user_input=True)
-                        
-                        # Enhanced conversation context
-                        enhanced_context = " I have advanced AI capabilities to provide highly personalized fashion recommendations."
-                        
-                        # Add to message history with enhanced context
-                        message_objects.append({
-                            "role": "user",
-                            "content": translated_input + enhanced_context,
-                        })
-                        
-                        # Get AI response with enhanced styling recommendations
-                        response = openai.chat.completions.create(
-                            model="gpt-3.5-turbo",
-                            messages=message_objects,
-                            temperature=0.5
-                        )
-                        
-                        ai_response = response.choices[0].message.content.strip()
-                        last_ai_response = ai_response
-                        user_context["last_ai_response"] = ai_response
-                        
-                        message_objects.append({
-                            "role": "assistant",
-                            "content": ai_response
-                        })
-                        
-                        # Enhanced keyword extraction from AI response
-                        response_keywords = await extract_ranked_keywords(ai_response, "", [])
-                        update_accumulated_keywords(response_keywords, user_context, user_input, is_ai_response=True)
-                        
-                        # Translate back if needed
-                        if user_language != "en":
-                            translated_response = translate_text(ai_response, user_language, session_id)
-                        else:
-                            translated_response = ai_response
-                        
-                        # Save response
-                        new_ai_message = ChatHistoryDB(
-                            session_id=session_id,
-                            message_type="assistant",
-                            content=ai_response
-                        )
-                        db.add(new_ai_message)
-                        await db.commit()
-                        
-                        # Render and send enhanced response
-                        ai_response_html = render_markdown(translated_response)
-                        await websocket.send_text(f"{session_id}|{ai_response_html}")
-
-                        # Enhanced context management
-                        user_context["current_text_input"] = user_input
-                        
-                        # Set awaiting confirmation flag - but let hybrid system determine type
-                        user_context["awaiting_confirmation"] = True
-                
-            except WebSocketDisconnect:
-                logging.info(f"Enhanced websocket disconnected for session {session_id}")
-                session_manager.reset_session(session_id)
-                break
-                
-            except Exception as e:
-                logging.error(f"Error processing enhanced message: {str(e)}\n{traceback.format_exc()}")
-                error_message = "I'm sorry, I encountered an error while processing your request. Please try again."
-                if user_language != "en":
-                    try:
-                        error_message = translate_text(error_message, user_language, session_id)
-                    except:
-                        pass
-                await websocket.send_text(f"{session_id}|{error_message}")
-                
-    except Exception as e:
-        logging.error(f"Enhanced websocket error: {str(e)}\n{traceback.format_exc()}")
-        try:
-            await websocket.close()
-        except:
-            pass
