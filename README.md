@@ -63,7 +63,3 @@ code .
 Inside the repository, you'll find an ecommerce.sql file that contains a sample SQL table. You can use this table as a starting point for your project's database.
 
 ---
-
-Website: [https://github.com/mehmetbacik/e-commerce](https://github.com/mehmetbacik/e-commerce)
-
-Admin: [https://github.com/mehmetbacik/e-commerce/admin](https://github.com/mehmetbacik/e-commerce/admin)
